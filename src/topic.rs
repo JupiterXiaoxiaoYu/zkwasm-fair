@@ -10,11 +10,11 @@ pub struct TopicData {
     pub end_time: u64,
     pub is_active: bool,
 
-    // 加权统计（权重总和）
+    // Weighted statistics (sum of weights)
     pub total_fair_votes: u64,
     pub total_unfair_votes: u64,
 
-    // 人数统计（投票人数）
+    // Voter count statistics
     pub total_fair_voters: u64,
     pub total_unfair_voters: u64,
 }
@@ -45,8 +45,8 @@ impl TopicData {
         })
     }
 
-    /// 懒加载检查并自动标记过期
-    /// 返回: (是否过期, 是否更新了存储状态)
+    /// Lazy check and automatically mark as expired
+    /// Returns: (is_expired, was_storage_updated)
     pub fn check_and_mark_expired(&mut self, current_time: u64) -> (bool, bool) {
         if !self.is_active {
             return (true, false);
@@ -60,7 +60,7 @@ impl TopicData {
         (false, false)
     }
 
-    /// 快速检查是否可以投票（不修改状态）
+    /// Quick check if voting is allowed (does not modify state)
     pub fn can_vote(&self, current_time: u64) -> bool {
         if !self.is_active {
             return false;
@@ -73,7 +73,7 @@ impl TopicData {
         current_time < self.end_time
     }
 
-    /// 添加投票（更新加权数和人数）
+    /// Add vote (update weighted sum and voter count)
     pub fn add_vote(
         &mut self,
         vote_type: VoteType,
@@ -98,7 +98,7 @@ impl TopicData {
         Ok(())
     }
 
-    /// 移除投票（仅用于活跃Topic）
+    /// Remove vote (only for active Topics)
     pub fn remove_vote(
         &mut self,
         vote_type: VoteType,
@@ -123,7 +123,7 @@ impl TopicData {
         Ok(())
     }
 
-    /// 手动关闭Topic
+    /// Manually close Topic
     pub fn close(&mut self) {
         self.is_active = false;
     }
@@ -155,11 +155,11 @@ impl StorageData for TopicData {
     }
 }
 
-// Topic管理器，使用索引存储
+// Topic manager, using indexed storage
 pub struct TopicManager;
 
 impl TopicManager {
-    const TOPIC_PREFIX: [u64; 2] = [1, 0]; // Topic存储键前缀
+    const TOPIC_PREFIX: [u64; 2] = [1, 0]; // Topic storage key prefix
 
     pub fn store_topic(topic_id: u64, topic: &TopicData) {
         let mut data = vec![];
@@ -186,7 +186,7 @@ impl TopicManager {
     }
 }
 
-// PlayerTopicVote: 用户在某个Topic中的投票数据
+// PlayerTopicVote: User's voting data for a specific Topic
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct PlayerTopicVote {
     pub staked_amount: u64,
@@ -215,13 +215,13 @@ impl PlayerTopicVote {
         self.unfair_weight > 0
     }
 
-    /// Stake到此Topic
+    /// Stake to this Topic
     pub fn stake(&mut self, amount: u64) -> Result<(), u32> {
         self.staked_amount = safe_add(self.staked_amount, amount)?;
         Ok(())
     }
 
-    /// 从此Topic Unstake
+    /// Unstake from this Topic
     pub fn unstake(&mut self, amount: u64) -> Result<(), u32> {
         if self.staked_amount < amount {
             return Err(ERROR_INSUFFICIENT_STAKE);
@@ -255,11 +255,11 @@ impl StorageData for PlayerTopicVote {
     }
 }
 
-// PlayerVoteManager: 管理用户在各个Topic中的投票
+// PlayerVoteManager: Manages user votes across Topics
 pub struct PlayerVoteManager;
 
 impl PlayerVoteManager {
-    const VOTE_PREFIX: [u64; 2] = [2, 0]; // 投票存储键前缀
+    const VOTE_PREFIX: [u64; 2] = [2, 0]; // Vote storage key prefix
 
     fn combine_player_id_safe(player_id: &[u64; 2]) -> u64 {
         let high = (player_id[0] & 0xFFFFFFFF) << 32;

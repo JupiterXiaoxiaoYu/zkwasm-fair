@@ -53,7 +53,7 @@ async function adminDeposit() {
     
     const rpc = new ZKWasmAppRpc("http://localhost:3000");
     
-    // 使用环境变量获取 admin key
+    // Get admin key from environment variable
     const adminKey = process.env.SERVER_ADMIN_KEY;
     if (!adminKey) {
         throw new Error("SERVER_ADMIN_KEY environment variable is required");
@@ -62,21 +62,21 @@ async function adminDeposit() {
     console.log("Admin key from env:", adminKey);
     
     try {
-        // 创建 admin 实例
+        // Create admin instance
         const admin = new Player(adminKey, rpc);
-        
-        // 确保 admin 已安装
+
+        // Ensure admin is installed
         await admin.installPlayer();
         console.log("Admin installation checked");
-        
-        // 目标 PID
+
+        // Target PID
         const targetPid1 = 9702256456334647944n;
         const targetPid2 = 5605797091113630749n;
         const depositAmount = 10000n;
-        
+
         console.log(`Depositing ${depositAmount} to PID: ${targetPid1}, ${targetPid2}`);
-        
-        // 执行充值
+
+        // Execute deposit
         await admin.depositFunds(depositAmount, targetPid1, targetPid2);
         console.log("✅ Deposit successful!");
         
@@ -88,5 +88,5 @@ async function adminDeposit() {
     }
 }
 
-// 运行脚本
+// Run script
 adminDeposit();

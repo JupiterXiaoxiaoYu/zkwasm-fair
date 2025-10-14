@@ -1,10 +1,10 @@
 use zkwasm_rest_abi::MERKLE_MAP;
 
-// Manager管理系统
+// Manager management system
 pub struct ManagerRegistry;
 
 impl ManagerRegistry {
-    const MANAGER_PREFIX: [u64; 2] = [3, 0]; // Manager存储键前缀
+    const MANAGER_PREFIX: [u64; 2] = [3, 0]; // Manager storage key prefix
 
     fn combine_player_id_safe(player_id: &[u64; 2]) -> u64 {
         let high = (player_id[0] & 0xFFFFFFFF) << 32;

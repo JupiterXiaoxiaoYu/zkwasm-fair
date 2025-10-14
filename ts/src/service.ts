@@ -2,7 +2,20 @@ import { Express } from "express";
 import mongoose from 'mongoose';
 import { Event, EventModel, Service, TxStateManager, TxWitness } from "zkwasm-ts-server";
 import { merkleRootToBeHexString } from "zkwasm-ts-server/src/lib.js";
-import { BetEvent, BetModel, docToJSON, IndexedObject, LiquidityHistoryModel, MarketModel, PlayerMarketPositionModel, u64ArrayToString } from "./models.js";
+import {
+    TopicModel,
+    VoteEventModel,
+    UnstakeEventModel,
+    PlayerTopicVoteModel,
+    docToJSON,
+    IndexedObject,
+    VoteEventData,
+    UnstakeEventData,
+    EVENT_INDEXED_OBJECT,
+    EVENT_VOTE,
+    EVENT_UNSTAKE,
+    EVENT_TOPIC_CLOSED
+} from "./models.js";
 
 const service = new Service(eventCallback, batchedCallback, extra);
 await service.initialize();
@@ -10,289 +23,326 @@ await service.initialize();
 let txStateManager = new TxStateManager(merkleRootToBeHexString(service.merkleRoot));
 
 function extra(app: Express) {
-  // Get all markets
-  app.get("/data/markets", async (req: any, res) => {
-    try {
-      const doc = await MarketModel.find({}).sort({ marketId: 1 });
-      let data = doc.map((d) => {
-        const market = docToJSON(d);
-        // Convert title from u64 array to string
-        if (market.title && Array.isArray(market.title)) {
-          market.titleString = u64ArrayToString(market.title);
+    // Get all topics
+    app.get("/data/topics", async (req: any, res) => {
+        try {
+            const doc = await TopicModel.find({}).sort({ topicId: 1 });
+
+            if (doc.length === 0) {
+                res.status(200).send({
+                    success: true,
+                    data: [],
+                });
+                return;
+            }
+
+            let data = doc.map((d) => docToJSON(d));
+
+            res.status(200).send({
+                success: true,
+                data: data,
+            });
+        } catch (e: any) {
+            console.error("Error fetching topics:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch topics"
+            });
         }
-        return market;
-      });
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching markets:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch markets"
-      });
-    }
-  });
+    });
 
-  // Get specific market by ID
-  app.get("/data/market/:marketId", async (req: any, res) => {
-    try {
-      const marketId = BigInt(req.params.marketId);
-      const doc = await MarketModel.findOne({ marketId });
-      
-      if (!doc) {
-        res.status(404).send({
-          success: false,
-          error: "Market not found"
-        });
-        return;
-      }
-      
-      const market = docToJSON(doc);
-      // Convert title from u64 array to string
-      if (market.title && Array.isArray(market.title)) {
-        market.titleString = u64ArrayToString(market.title);
-      }
-      
-      res.status(200).send({
-        success: true,
-        data: market,
-      });
-    } catch (e) {
-      console.error("Error fetching market:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch market"
-      });
-    }
-  });
+    // Get specific topic by ID
+    app.get("/data/topic/:topicId", async (req: any, res) => {
+        try {
+            const topicId = req.params.topicId;
+            const doc = await TopicModel.findOne({ topicId: topicId });
 
-  // Get recent 20 transactions for specific market
-  app.get("/data/market/:marketId/recent", async (req: any, res) => {
-    try {
-      const marketId = BigInt(req.params.marketId);
-      
-      const doc = await BetModel.find({ marketId })
-        .sort({ counter: -1, index: -1 })
-        .limit(20);
+            if (!doc) {
+                res.status(404).send({
+                    success: false,
+                    error: "Topic not found"
+                });
+                return;
+            }
 
-      let data = doc.map((d: mongoose.Document) => {
-        const transaction = docToJSON(d);
-        // Add transaction type
-        if (transaction.betType >= 10) {
-          transaction.transactionType = transaction.betType === 11 ? 'SELL_YES' : 'SELL_NO';
-          transaction.originalBetType = transaction.betType - 10;
-        } else {
-          transaction.transactionType = transaction.betType === 1 ? 'BET_YES' : 'BET_NO';
-          transaction.originalBetType = transaction.betType;
+            const topic = docToJSON(doc);
+
+            res.status(200).send({
+                success: true,
+                data: topic,
+            });
+        } catch (e) {
+            console.error("Error fetching topic:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch topic"
+            });
         }
-        return transaction;
-      });
-      
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching market recent transactions:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch market recent transactions"
-      });
-    }
-  });
+    });
 
-  // Get player's recent 20 transactions across all markets
-  app.get("/data/player/:pid1/:pid2/recent", async (req: any, res) => {
-    try {
-      const pid1 = BigInt(req.params.pid1);
-      const pid2 = BigInt(req.params.pid2);
-      
-      const doc = await BetModel.find({
-        pid: [pid1, pid2],
-      })
-        .sort({ counter: -1, index: -1 })
-        .limit(20);
+    // Get recent vote events for specific topic
+    app.get("/data/topic/:topicId/votes", async (req: any, res) => {
+        try {
+            const topicId = req.params.topicId;
 
-      let data = doc.map((d: mongoose.Document) => {
-        const transaction = docToJSON(d);
-        // Add transaction type
-        if (transaction.betType >= 10) {
-          transaction.transactionType = transaction.betType === 11 ? 'SELL_YES' : 'SELL_NO';
-          transaction.originalBetType = transaction.betType - 10;
-        } else {
-          transaction.transactionType = transaction.betType === 1 ? 'BET_YES' : 'BET_NO';
-          transaction.originalBetType = transaction.betType;
+            const doc = await VoteEventModel.find({ topicId: topicId })
+                .sort({ counter: -1 })
+                .limit(100);
+
+            let data = doc.map((d: mongoose.Document) => {
+                const vote = docToJSON(d);
+                vote.transactionType = 'VOTE';
+                return vote;
+            });
+
+            res.status(200).send({
+                success: true,
+                data: data,
+            });
+        } catch (e) {
+            console.error("Error fetching topic votes:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch topic votes"
+            });
         }
-        return transaction;
-      });
-      
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching player recent transactions:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch player recent transactions"
-      });
-    }
-  });
+    });
 
-  // Get player's recent 20 transactions for specific market
-  app.get("/data/player/:pid1/:pid2/market/:marketId/recent", async (req: any, res) => {
-    try {
-      const pid1 = BigInt(req.params.pid1);
-      const pid2 = BigInt(req.params.pid2);
-      const marketId = BigInt(req.params.marketId);
-      
-      const doc = await BetModel.find({
-        pid: [pid1, pid2],
-        marketId: marketId
-      })
-        .sort({ counter: -1, index: -1 })
-        .limit(20);
+    // Get recent unstake events for specific topic
+    app.get("/data/topic/:topicId/unstakes", async (req: any, res) => {
+        try {
+            const topicId = req.params.topicId;
 
-      let data = doc.map((d: mongoose.Document) => {
-        const transaction = docToJSON(d);
-        // Add transaction type
-        if (transaction.betType >= 10) {
-          transaction.transactionType = transaction.betType === 11 ? 'SELL_YES' : 'SELL_NO';
-          transaction.originalBetType = transaction.betType - 10;
-        } else {
-          transaction.transactionType = transaction.betType === 1 ? 'BET_YES' : 'BET_NO';
-          transaction.originalBetType = transaction.betType;
+            const doc = await UnstakeEventModel.find({ topicId: topicId })
+                .sort({ counter: -1 })
+                .limit(100);
+
+            let data = doc.map((d: mongoose.Document) => {
+                const unstake = docToJSON(d);
+                unstake.transactionType = 'UNSTAKE';
+                return unstake;
+            });
+
+            res.status(200).send({
+                success: true,
+                data: data,
+            });
+        } catch (e) {
+            console.error("Error fetching topic unstakes:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch topic unstakes"
+            });
         }
-        return transaction;
-      });
-      
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching player market recent transactions:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch player market recent transactions"
-      });
-    }
-  });
+    });
 
-  // Get player market position
-  app.get("/data/player/:pid1/:pid2/market/:marketId", async (req: any, res) => {
-    try {
-      const pid1 = BigInt(req.params.pid1);
-      const pid2 = BigInt(req.params.pid2);
-      const marketId = BigInt(req.params.marketId);
-      
-      const doc = await PlayerMarketPositionModel.findOne({
-        pid: [pid1, pid2],
-        marketId: marketId
-      });
-      
-      let data;
-      if (doc) {
-        data = docToJSON(doc);
-      } else {
-        // Return default position if not found
-        data = {
-          pid: [pid1.toString(), pid2.toString()],
-          marketId: marketId.toString(),
-          yesShares: "0",
-          noShares: "0",
-          claimed: false
-        };
-      }
-      
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching player market position:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch player market position"
-      });
-    }
-  });
+    // Get player's recent vote events across all topics
+    app.get("/data/player/:pid1/:pid2/votes", async (req: any, res) => {
+        try {
+            const pid1 = req.params.pid1;
+            const pid2 = req.params.pid2;
 
-  // Get all player positions across markets
-  app.get("/data/player/:pid1/:pid2/positions", async (req: any, res) => {
-    try {
-      const pid1 = BigInt(req.params.pid1);
-      const pid2 = BigInt(req.params.pid2);
-      
-      const doc = await PlayerMarketPositionModel.find({
-        pid: [pid1, pid2]
-      });
-      
-      let data = doc.map((d) => docToJSON(d));
-      
-      res.status(200).send({
-        success: true,
-        data: data,
-      });
-    } catch (e) {
-      console.error("Error fetching player positions:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch player positions"
-      });
-    }
-  });
+            const doc = await VoteEventModel.find({
+                pid: [pid1, pid2],
+            })
+                .sort({ counter: -1 })
+                .limit(50);
 
-  // Get market liquidity history from IndexedObject data (enhanced with actionType and prices)
-  app.get("/data/market/:marketId/liquidity", async (req: any, res) => {
-    try {
-      const marketId = BigInt(req.params.marketId);
-      const limit = parseInt(req.query.limit || '100');
-      
-      // Get liquidity history from LiquidityHistoryModel (from IndexedObject events)
-      const doc = await LiquidityHistoryModel.find({
-        marketId: marketId
-              }).sort({ counter: -1 }).limit(limit);
-      
-      let data = doc.map((d) => {
-        const history = docToJSON(d);
-        
-        return {
-          marketId: history.marketId,
-          counter: history.counter,
-          yesLiquidity: history.yesLiquidity,
-          noLiquidity: history.noLiquidity
-        };
-      });
-      
-      res.status(200).send({
-        success: true,
-        data: data.reverse(), // Return in ascending order
-      });
-    } catch (e) {
-      console.error("Error fetching market liquidity history:", e);
-      res.status(500).send({
-        success: false,
-        error: "Failed to fetch market liquidity history"
-      });
-    }
-  });
+            let data = doc.map((d: mongoose.Document) => {
+                const vote = docToJSON(d);
+                vote.transactionType = 'VOTE';
+                return vote;
+            });
 
+            res.status(200).send({
+                success: true,
+                data: data,
+            });
+        } catch (e) {
+            console.error("Error fetching player votes:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch player votes"
+            });
+        }
+    });
 
+    // Get player's topic vote data
+    app.get("/data/player/:pid1/:pid2/topic/:topicId", async (req: any, res) => {
+        try {
+            const pid1 = req.params.pid1;
+            const pid2 = req.params.pid2;
+            const topicId = req.params.topicId;
+
+            const doc = await PlayerTopicVoteModel.findOne({
+                pid: [pid1, pid2],
+                topicId: topicId
+            });
+
+            if (!doc) {
+                // Return default empty vote state
+                res.status(200).send({
+                    success: true,
+                    data: {
+                        pid: [pid1, pid2],
+                        topicId: topicId,
+                        stakedAmount: "0",
+                        fairWeight: "0",
+                        unfairWeight: "0",
+                        firstVoteTime: "0",
+                        lastVoteTime: "0",
+                        lastFairVoteTime: "0",
+                        lastUnfairVoteTime: "0"
+                    }
+                });
+                return;
+            }
+
+            const voteData = docToJSON(doc);
+
+            res.status(200).send({
+                success: true,
+                data: voteData,
+            });
+        } catch (e) {
+            console.error("Error fetching player topic vote:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch player topic vote"
+            });
+        }
+    });
+
+    // Get all player's topic votes
+    app.get("/data/player/:pid1/:pid2/topics", async (req: any, res) => {
+        try {
+            const pid1 = req.params.pid1;
+            const pid2 = req.params.pid2;
+
+            const doc = await PlayerTopicVoteModel.find({
+                pid: [pid1, pid2]
+            });
+
+            let data = doc.map((d: mongoose.Document) => docToJSON(d));
+
+            res.status(200).send({
+                success: true,
+                data: data,
+            });
+        } catch (e) {
+            console.error("Error fetching player topic votes:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch player topic votes"
+            });
+        }
+    });
+
+    // Get topic statistics
+    app.get("/data/topic/:topicId/stats", async (req: any, res) => {
+        try {
+            const topicId = req.params.topicId;
+
+            // Get vote count
+            const voteCount = await VoteEventModel.countDocuments({ topicId: topicId });
+
+            // Get unstake count
+            const unstakeCount = await UnstakeEventModel.countDocuments({ topicId: topicId });
+
+            // Get unique voters
+            const uniqueVotersResult = await VoteEventModel.aggregate([
+                { $match: { topicId: topicId } },
+                {
+                    $group: {
+                        _id: null,
+                        uniqueVoters: { $addToSet: "$pid" }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 0,
+                        uniqueVoters: { $size: "$uniqueVoters" }
+                    }
+                }
+            ]);
+
+            const uniqueVoters = uniqueVotersResult.length > 0 ? uniqueVotersResult[0].uniqueVoters : 0;
+
+            const stats = {
+                voteCount,
+                unstakeCount,
+                uniqueVoters
+            };
+
+            res.status(200).send({
+                success: true,
+                data: stats,
+            });
+        } catch (e) {
+            console.error("Error fetching topic stats:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch topic stats"
+            });
+        }
+    });
+
+    // Get platform statistics
+    app.get("/data/platform/stats", async (req: any, res) => {
+        try {
+            // Get total topics
+            const totalTopics = await TopicModel.countDocuments();
+
+            // Get total votes
+            const totalVotes = await VoteEventModel.countDocuments();
+
+            // Get unique voters
+            const uniqueVotersResult = await VoteEventModel.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        uniqueVoters: { $addToSet: "$pid" }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 0,
+                        uniqueVoters: { $size: "$uniqueVoters" }
+                    }
+                }
+            ]);
+
+            const uniqueVoters = uniqueVotersResult.length > 0 ? uniqueVotersResult[0].uniqueVoters : 0;
+
+            const stats = {
+                totalTopics,
+                totalVotes,
+                uniqueVoters
+            };
+
+            res.status(200).send({
+                success: true,
+                data: stats,
+            });
+        } catch (e) {
+            console.error("Error fetching platform stats:", e);
+            res.status(500).send({
+                success: false,
+                error: "Failed to fetch platform stats"
+            });
+        }
+    });
 }
 
 service.serve();
-
-const EVENT_BET_UPDATE = 3;
-const EVENT_INDEXED_OBJECT = 4;
 
 async function batchedCallback(_arg: TxWitness[], _preMerkle: string, postMerkle: string) {
     await txStateManager.moveToCommit(postMerkle);
 }
 
 async function eventCallback(arg: TxWitness, data: BigUint64Array) {
+    console.log("Event callback triggered with data:", data);
+
     if (data.length == 0) {
         return;
     }
@@ -327,60 +377,33 @@ async function eventCallback(arg: TxWitness, data: BigUint64Array) {
         let eventLength = data[i] & ((1n << 32n) - 1n);
         let eventData = data.slice(i + 1, i + 1 + Number(eventLength));
 
-        switch (eventType) {
-            case EVENT_BET_UPDATE:
-                {
-                    try {
-                        let bet = BetEvent.fromEvent(eventData);
-                        let betData = bet.toObject();
-                        
-                        // Validate bet data
-                        if (isNaN(betData.betType) || betData.betType < 0) {
-                            console.error("Invalid betType:", betData.betType, "skipping event");
-                            break;
-                        }
-                        
-                        // Save bet
-                        let doc = new BetModel(betData);
-                        await doc.save();
-                        
-                        // Update or create player market position
-                        const positionUpdate = {
-                            $inc: betData.betType >= 10 ? 
-                                // Selling shares (betType 11=SELL_YES, 12=SELL_NO)
-                                (betData.betType === 11 ? { yesShares: -betData.shares } : { noShares: -betData.shares }) :
-                                // Buying shares (betType 1=YES, 0=NO)
-                                (betData.betType === 1 ? { yesShares: betData.shares } : { noShares: betData.shares })
-                        };
-                        
-                        await PlayerMarketPositionModel.findOneAndUpdate(
-                            { 
-                                pid: betData.pid,
-                                marketId: betData.marketId
-                            },
-                            positionUpdate,
-                            { upsert: true, setDefaultsOnInsert: true }
-                        );
-                        
-                        // Note: Market data updates are now handled via IndexedObject events only
-                        // No need to manually update market totalVolume here
-                        
+        console.log("Processing event type:", eventType, "length:", eventLength);
 
-                    } catch (error) {
-                        console.error("Error processing bet event:", error);
-                        // Don't exit the process, just skip this event
+        switch (eventType) {
+            case EVENT_INDEXED_OBJECT:
+                try {
+                    console.log("=== Processing IndexedObject event ===");
+                    console.log("Event data:", Array.from(eventData));
+                    let obj = IndexedObject.fromEvent(eventData);
+                    console.log("Parsed object index:", obj.index, "data length:", obj.data.length);
+                    if (obj.index === 1) { // TOPIC_INFO
+                        console.log("This is a Topic event, topicId:", obj.data[0]);
                     }
+                    await obj.storeRelatedObject();
+                    console.log("IndexedObject stored successfully");
+                    console.log("=== End IndexedObject processing ===");
+                } catch (error) {
+                    console.error("Error processing indexed object event:", error);
                 }
                 break;
-            case EVENT_INDEXED_OBJECT:
-                {
-                    try {
-                        let obj = IndexedObject.fromEvent(eventData);
-                        await obj.storeRelatedObject();
-                    } catch (error) {
-                        console.error("Error processing indexed object event:", error);
-                    }
-                }
+            case EVENT_VOTE:
+                await handleVoteEvent(arg, eventData);
+                break;
+            case EVENT_UNSTAKE:
+                await handleUnstakeEvent(arg, eventData);
+                break;
+            case EVENT_TOPIC_CLOSED:
+                await handleTopicClosedEvent(arg, eventData);
                 break;
             default:
                 console.warn("Unknown event type:", eventType);
@@ -388,4 +411,125 @@ async function eventCallback(arg: TxWitness, data: BigUint64Array) {
         }
         i += 1 + Number(eventLength);
     }
-} 
+}
+
+async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
+    try {
+        console.log(`Vote Event received with data length: ${data.length}`);
+        console.log("Full vote event data:", Array.from(data));
+
+        // Parse vote event using VoteEventData class
+        const voteEvent = VoteEventData.fromEvent(data);
+        const voteObj = voteEvent.toObject();
+
+        console.log(`Vote Event: Player [${voteObj.pid[0]}, ${voteObj.pid[1]}] voted ${voteObj.voteType} with ${voteObj.stakeAmount} on topic ${voteObj.topicId}`);
+
+        // Store vote event in database
+        await VoteEventModel.create(voteObj);
+
+        // Update or create player topic vote record
+        const existingVote = await PlayerTopicVoteModel.findOne({
+            pid: voteObj.pid,
+            topicId: voteObj.topicId
+        });
+
+        if (existingVote) {
+            // Update existing vote
+            if (voteObj.voteType === 1) { // Fair
+                existingVote.fairWeight = (BigInt(existingVote.fairWeight) + BigInt(voteObj.stakeAmount)).toString() as any;
+                if (BigInt(existingVote.lastFairVoteTime) === 0n) {
+                    existingVote.lastFairVoteTime = voteObj.counter.toString() as any;
+                }
+            } else { // Unfair
+                existingVote.unfairWeight = (BigInt(existingVote.unfairWeight) + BigInt(voteObj.stakeAmount)).toString() as any;
+                if (BigInt(existingVote.lastUnfairVoteTime) === 0n) {
+                    existingVote.lastUnfairVoteTime = voteObj.counter.toString() as any;
+                }
+            }
+            existingVote.stakedAmount = (BigInt(existingVote.stakedAmount) + BigInt(voteObj.stakeAmount)).toString() as any;
+            existingVote.lastVoteTime = voteObj.counter.toString() as any;
+            await existingVote.save();
+        } else {
+            // Create new vote record
+            const newVote: any = {
+                pid: voteObj.pid,
+                topicId: voteObj.topicId,
+                stakedAmount: voteObj.stakeAmount.toString(),
+                fairWeight: voteObj.voteType === 1 ? voteObj.stakeAmount.toString() : "0",
+                unfairWeight: voteObj.voteType === 0 ? voteObj.stakeAmount.toString() : "0",
+                firstVoteTime: voteObj.counter.toString(),
+                lastVoteTime: voteObj.counter.toString(),
+                lastFairVoteTime: voteObj.voteType === 1 ? voteObj.counter.toString() : "0",
+                lastUnfairVoteTime: voteObj.voteType === 0 ? voteObj.counter.toString() : "0"
+            };
+            await PlayerTopicVoteModel.create(newVote);
+        }
+
+        console.log(`Vote record saved to database for topic ${voteObj.topicId}`);
+
+    } catch (error) {
+        console.error("Error handling vote event:", error);
+        console.error("Error details:", error);
+    }
+}
+
+async function handleUnstakeEvent(arg: TxWitness, data: BigUint64Array) {
+    try {
+        console.log(`Unstake Event received with data length: ${data.length}`);
+        console.log("Full unstake event data:", Array.from(data));
+
+        // Parse unstake event using UnstakeEventData class
+        const unstakeEvent = UnstakeEventData.fromEvent(data);
+        const unstakeObj = unstakeEvent.toObject();
+
+        console.log(`Unstake Event: Player [${unstakeObj.pid[0]}, ${unstakeObj.pid[1]}] unstaked ${unstakeObj.amount} from topic ${unstakeObj.topicId}`);
+
+        // Store unstake event in database
+        await UnstakeEventModel.create(unstakeObj);
+
+        // Update player topic vote record
+        const existingVote = await PlayerTopicVoteModel.findOne({
+            pid: unstakeObj.pid,
+            topicId: unstakeObj.topicId
+        });
+
+        if (existingVote) {
+            existingVote.stakedAmount = (BigInt(existingVote.stakedAmount) - BigInt(unstakeObj.amount)).toString() as any;
+            await existingVote.save();
+        }
+
+        console.log(`Unstake record saved to database for topic ${unstakeObj.topicId}`);
+
+    } catch (error) {
+        console.error("Error handling unstake event:", error);
+        console.error("Error details:", error);
+    }
+}
+
+async function handleTopicClosedEvent(arg: TxWitness, data: BigUint64Array) {
+    try {
+        console.log(`Topic Closed Event received with data length: ${data.length}`);
+        console.log("Full topic closed event data:", Array.from(data));
+
+        // Topic closed event format: [topic_id, counter]
+        const topicId = data[0];
+        const counter = data[1];
+
+        console.log(`Topic Closed Event: Topic ${topicId} closed at counter ${counter}`);
+
+        // Update topic's isActive status
+        await TopicModel.findOneAndUpdate(
+            { topicId: topicId.toString() },
+            { isActive: false },
+            { upsert: false }
+        );
+
+        console.log(`Topic ${topicId} marked as inactive`);
+
+    } catch (error) {
+        console.error("Error handling topic closed event:", error);
+        console.error("Error details:", error);
+    }
+}
+
+export default service;

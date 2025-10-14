@@ -46,18 +46,13 @@ impl CommandHandler for Withdraw {
 
         player.check_and_inc_nonce(nonce);
 
-        let amount = self.data[2];
-
-        // Check balance
-        if player.data.balance < amount {
-            return Err(ERROR_INSUFFICIENT_BALANCE);
-        }
+        let amount = self.data[0] & 0xffffffff;
 
         // Deduct from balance
-        player.data.balance = safe_sub(player.data.balance, amount)?;
+        player.data.spend_balance(amount)?;
 
         // Add to settlement queue (token_index = 0 for native token)
-        let withdrawinfo = zkwasm_rest_abi::WithdrawInfo::new(&self.data, 0);
+        let withdrawinfo = zkwasm_rest_abi::WithdrawInfo::new(&[self.data[0], self.data[1], self.data[2]], 0);
         SettlementInfo::append_settlement(withdrawinfo);
 
         player.store();
@@ -67,13 +62,22 @@ impl CommandHandler for Withdraw {
 }
 
 impl CommandHandler for Deposit {
-    fn handle(&self, _pid: &[u64; 2], _nonce: u64, _rand: &[u64; 4], _counter: u64) -> Result<(), u32> {
-        let target_player_id = [self.data[0], self.data[1]];
-        let amount = self.data[2];
+    fn handle(&self, pid: &[u64; 2], nonce: u64, _rand: &[u64; 4], _counter: u64) -> Result<(), u32> {
+        // Get admin player and verify nonce
+        let mut admin = Player::get_from_pid(pid).ok_or(ERROR_PLAYER_NOT_EXIST)?;
+        admin.check_and_inc_nonce(nonce);
 
+        // Get target player
+        let target_player_id = [self.data[0], self.data[1]];
         let mut player = Player::get_from_pid(&target_player_id).ok_or(ERROR_PLAYER_NOT_EXIST)?;
-        player.data.balance = safe_add(player.data.balance, amount)?;
+
+        // Add balance to target player
+        let amount = self.data[2];
+        player.data.add_balance(amount)?;
+
+        // Store both players
         player.store();
+        admin.store();
 
         Ok(())
     }
@@ -154,11 +158,6 @@ fn handle_vote(
     stake_amount: u64,
     counter: u64,
 ) -> Result<(), u32> {
-    // Check balance
-    if player.data.balance < stake_amount {
-        return Err(ERROR_INSUFFICIENT_BALANCE);
-    }
-
     // Get topic and check expiry
     let mut topic = TopicManager::get_topic(topic_id).ok_or(ERROR_TOPIC_NOT_FOUND)?;
 
@@ -174,10 +173,20 @@ fn handle_vote(
     }
 
     // Deduct from balance
-    player.data.balance = safe_sub(player.data.balance, stake_amount)?;
+    player.data.spend_balance(stake_amount)?;
 
     // Get user vote state
     let mut vote = PlayerVoteManager::get_vote(&player.player_id, topic_id);
+
+    // Check if user already voted the opposite type (prevent mixed voting)
+    let has_opposite_type = match vote_type {
+        VoteType::Fair => vote.has_unfair_vote(),
+        VoteType::Unfair => vote.has_fair_vote(),
+    };
+
+    if has_opposite_type {
+        return Err(ERROR_CANNOT_VOTE_BOTH_TYPES);
+    }
 
     let had_this_type = match vote_type {
         VoteType::Fair => vote.has_fair_vote(),
@@ -250,45 +259,45 @@ fn handle_unstake(
     // Check if topic is expired/closed
     let is_topic_expired = !topic.is_active || counter >= topic.end_time;
 
-    // Calculate proportional vote weight to remove
+    // Check if user has any votes
     let total_weight = vote.get_total_weight();
     if total_weight == 0 {
         return Err(ERROR_NO_VOTES);
     }
 
-    // Calculate proportional removal
-    let unfair_to_remove = (vote.unfair_weight as u128 * amount as u128 / total_weight as u128) as u64;
-    let fair_to_remove = amount - unfair_to_remove;
+    // Determine which vote type to remove from (user can only have one type)
+    let (vote_type_to_remove, weight_to_remove) = if vote.has_fair_vote() {
+        (VoteType::Fair, amount)
+    } else {
+        (VoteType::Unfair, amount)
+    };
 
-    // Remove vote weights from player's vote record
-    if unfair_to_remove > 0 {
-        vote.unfair_weight = safe_sub(vote.unfair_weight, unfair_to_remove)?;
-    }
-
-    if fair_to_remove > 0 {
-        vote.fair_weight = safe_sub(vote.fair_weight, fair_to_remove)?;
+    // Remove vote weight from player's vote record
+    match vote_type_to_remove {
+        VoteType::Fair => {
+            vote.fair_weight = safe_sub(vote.fair_weight, weight_to_remove)?;
+        },
+        VoteType::Unfair => {
+            vote.unfair_weight = safe_sub(vote.unfair_weight, weight_to_remove)?;
+        },
     }
 
     // Only update topic statistics if topic is still active
     if !is_topic_expired {
-        // Remove Unfair votes from topic
-        if unfair_to_remove > 0 {
-            let type_cleared = vote.unfair_weight == 0;
-            topic.remove_vote(VoteType::Unfair, unfair_to_remove, type_cleared)?;
-        }
+        // Check if this unstake clears all votes of this type
+        let type_cleared = match vote_type_to_remove {
+            VoteType::Fair => vote.fair_weight == 0,
+            VoteType::Unfair => vote.unfair_weight == 0,
+        };
 
-        // Remove Fair votes from topic
-        if fair_to_remove > 0 {
-            let type_cleared = vote.fair_weight == 0;
-            topic.remove_vote(VoteType::Fair, fair_to_remove, type_cleared)?;
-        }
+        topic.remove_vote(vote_type_to_remove, weight_to_remove, type_cleared)?;
     }
 
     // Unstake from topic
     vote.unstake(amount)?;
 
     // Return to balance
-    player.data.balance = safe_add(player.data.balance, amount)?;
+    player.data.add_balance(amount)?;
 
     // Store updates
     PlayerVoteManager::store_vote(&player.player_id, topic_id, &vote);
@@ -338,20 +347,21 @@ fn handle_close_topic(
 
 pub fn decode_error(e: u32) -> &'static str {
     match e {
-        ERROR_INSUFFICIENT_BALANCE => "Insufficient balance",
-        ERROR_INSUFFICIENT_STAKE => "Insufficient stake",
-        ERROR_TOPIC_NOT_FOUND => "Topic not found",
-        ERROR_TOPIC_NOT_ACTIVE => "Topic not active",
-        ERROR_TOPIC_ALREADY_CLOSED => "Topic already closed",
-        ERROR_TOPIC_EXPIRED => "Topic expired",
-        ERROR_INVALID_TOPIC_TIME => "Invalid topic time",
-        ERROR_NOT_MANAGER => "Not a manager",
+        ERROR_INSUFFICIENT_BALANCE => "InsufficientBalance",
+        ERROR_INSUFFICIENT_STAKE => "InsufficientStake",
+        ERROR_TOPIC_NOT_FOUND => "TopicNotFound",
+        ERROR_TOPIC_NOT_ACTIVE => "TopicNotActive",
+        ERROR_TOPIC_ALREADY_CLOSED => "TopicAlreadyClosed",
+        ERROR_TOPIC_EXPIRED => "TopicExpired",
+        ERROR_INVALID_TOPIC_TIME => "InvalidTopicTime",
+        ERROR_NOT_MANAGER => "NotManager",
         ERROR_UNAUTHORIZED => "Unauthorized",
-        ERROR_NO_VOTES => "No votes",
-        ERROR_PLAYER_NOT_EXIST => "Player does not exist",
-        ERROR_PLAYER_ALREADY_EXISTS => "Player already exists",
-        ERROR_OVERFLOW => "Arithmetic overflow",
-        ERROR_UNDERFLOW => "Arithmetic underflow",
-        _ => "Unknown error",
+        ERROR_NO_VOTES => "NoVotes",
+        ERROR_CANNOT_VOTE_BOTH_TYPES => "CannotVoteBothTypes",
+        ERROR_PLAYER_NOT_EXIST => "PlayerNotExist",
+        ERROR_PLAYER_ALREADY_EXISTS => "PlayerAlreadyExists",
+        ERROR_OVERFLOW => "Overflow",
+        ERROR_UNDERFLOW => "Underflow",
+        _ => "Unknown",
     }
 }

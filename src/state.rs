@@ -37,9 +37,9 @@ impl GlobalState {
     }
 
     pub fn get_state(pid: Vec<u64>) -> String {
-        use crate::player::VotingPlayer;
+        use crate::player::{Player, Owner};
         let pkey: [u64; 4] = [pid[0], pid[1], pid[2], pid[3]];
-        let player = VotingPlayer::get(&pkey).unwrap();
+        let player = Player::get(&pkey);
         serde_json::to_string(&player).unwrap()
     }
 

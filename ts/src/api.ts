@@ -1,27 +1,23 @@
 import fetch from 'node-fetch';
 import { PlayerConvention, ZKWasmAppRpc, createCommand } from "zkwasm-minirollup-rpc";
 import { get_server_admin_key } from "zkwasm-ts-server/src/config.js";
-import { stringToU64Array, validateMarketTitleLength } from "./models.js";
+import { VoteType } from "./models.js";
 
 export const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3000";
 
-// Command constants - updated for multi-market
+// Command constants - updated for voting system
 const TICK = 0;
 const INSTALL_PLAYER = 1;
 const WITHDRAW = 2;
 const DEPOSIT = 3;
-const BET = 4;
-const SELL = 5;
-const RESOLVE = 6;
-const CLAIM = 7;
-const WITHDRAW_FEES = 8;
-const CREATE_MARKET = 9;
+const ADD_MANAGER = 4;
+const REMOVE_MANAGER = 5;
+const CREATE_TOPIC = 6;
+const VOTE = 7;
+const UNSTAKE = 8;
+const CLOSE_TOPIC = 9;
 
-// Fee constants - centralized to avoid duplication
-const PLATFORM_FEE_RATE = 100n; // 1%
-const FEE_BASIS_POINTS = 10000n;
-
-export class Player extends PlayerConvention {
+export class VotingPlayer extends PlayerConvention {
     constructor(key: string, rpc: ZKWasmAppRpc) {
         super(key, rpc, BigInt(DEPOSIT), BigInt(WITHDRAW));
         this.processingKey = key;
@@ -47,85 +43,62 @@ export class Player extends PlayerConvention {
         } catch (e) {
             if (e instanceof Error && e.message === "PlayerAlreadyExists") {
                 console.log("Player already exists, skipping installation");
-                return null; // Not an error, just already exists
+                return null;
             }
-            throw e; // Re-throw other errors
+            throw e;
         }
     }
 
-    // Updated to include market_id
-    async placeBet(marketId: bigint, betType: number, amount: bigint) {
+    // Create a new voting topic
+    async createTopic(duration: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(BET), [marketId, BigInt(betType), amount]);
+        let cmd = createCommand(nonce, BigInt(CREATE_TOPIC), [duration]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Updated to include market_id
-    async sellShares(marketId: bigint, sellType: number, shares: bigint) {
+    // Vote on a topic
+    async vote(topicId: bigint, voteType: VoteType, stakeAmount: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(SELL), [marketId, BigInt(sellType), shares]);
+        let cmd = createCommand(nonce, BigInt(VOTE), [topicId, BigInt(voteType), stakeAmount]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Updated to include market_id
-    async claimWinnings(marketId: bigint) {
+    // Unstake from a topic
+    async unstake(topicId: bigint, amount: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(CLAIM), [marketId]);
+        let cmd = createCommand(nonce, BigInt(UNSTAKE), [topicId, amount]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Updated to include market_id
-    async resolveMarket(marketId: bigint, outcome: boolean) {
+    // Close a topic (manager only)
+    async closeTopic(topicId: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(RESOLVE), [marketId, outcome ? 1n : 0n]);
+        let cmd = createCommand(nonce, BigInt(CLOSE_TOPIC), [topicId]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Updated to include market_id
-    async withdrawFees(marketId: bigint) {
+    // Add a manager (admin only)
+    async addManager(targetPid1: bigint, targetPid2: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(WITHDRAW_FEES), [marketId]);
+        let cmd = createCommand(nonce, BigInt(ADD_MANAGER), [targetPid1, targetPid2]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Create markets with relative time offsets
-    async createMarket(
-        title: string,
-        startTimeOffset: bigint,    // Offset from current counter
-        endTimeOffset: bigint,      // Offset from current counter
-        resolutionTimeOffset: bigint, // Offset from current counter
-        yesLiquidity: bigint,
-        noLiquidity: bigint
-    ) {
-        // Validate title length before creating market
-        const titleValidation = validateMarketTitleLength(title);
-        if (!titleValidation.valid) {
-            throw new Error(titleValidation.message);
-        }
-        
+    // Remove a manager (admin only)
+    async removeManager(targetPid1: bigint, targetPid2: bigint) {
         let nonce = await this.getNonce();
-        const titleU64Array = stringToU64Array(title);
-        
-        // Build command: [cmd, ...title_u64s, start_time_offset, end_time_offset, resolution_time_offset, yes_liquidity, no_liquidity]
-        const params = [
-            ...titleU64Array,
-            startTimeOffset,
-            endTimeOffset,
-            resolutionTimeOffset,
-            yesLiquidity,
-            noLiquidity
-        ];
-        
-        let cmd = createCommand(nonce, BigInt(CREATE_MARKET), params);
+        let cmd = createCommand(nonce, BigInt(REMOVE_MANAGER), [targetPid1, targetPid2]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
+    // Withdraw funds
     async withdrawFunds(amount: bigint, addressHigh: bigint, addressLow: bigint) {
         let nonce = await this.getNonce();
         let cmd = createCommand(nonce, BigInt(WITHDRAW), [0n, amount, addressHigh, addressLow]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
+    // Deposit funds (admin only)
     async depositFunds(amount: bigint, targetPid1: bigint, targetPid2: bigint) {
         let nonce = await this.getNonce();
         let cmd = createCommand(nonce, BigInt(DEPOSIT), [targetPid1, targetPid2, 0n, amount]);
@@ -133,53 +106,46 @@ export class Player extends PlayerConvention {
     }
 }
 
-// Updated interfaces for multi-market support
-export interface MarketData {
-    marketId: string;
-    title: string;
-    titleString?: string; // Converted from u64 array to string
+// Updated interfaces for voting system
+export interface TopicData {
+    topicId: string;
     startTime: string;
     endTime: string;
-    resolutionTime: string;
-    yesLiquidity: string;
-    noLiquidity: string;
-    prizePool: string;
-    totalVolume: string;
-    totalYesShares: string;
-    totalNoShares: string;
-    resolved: boolean;
-    outcome: boolean | null;
-    totalFeesCollected: string;
+    isActive: boolean;
+    totalFairVotes: string;
+    totalUnfairVotes: string;
+    totalFairVoters: string;
+    totalUnfairVoters: string;
 }
 
-export interface TransactionData {
-    index: string;
+export interface VoteEventData {
     pid: string[];
-    marketId: string;
-    betType: number;
+    topicId: string;
+    voteType: VoteType;
+    stakeAmount: string;
+    counter: string;
+}
+
+export interface UnstakeEventData {
+    pid: string[];
+    topicId: string;
     amount: string;
-    shares: string;
     counter: string;
-    transactionType: 'BET_YES' | 'BET_NO' | 'SELL_YES' | 'SELL_NO';
-    originalBetType: number;
 }
 
-export interface LiquidityHistoryData {
-    marketId: string;
-    counter: string;
-    yesLiquidity: string;
-    noLiquidity: string;
-}
-
-export interface PlayerMarketPosition {
+export interface PlayerTopicVoteData {
     pid: string[];
-    marketId: string;
-    yesShares: string;
-    noShares: string;
-    claimed: boolean;
+    topicId: string;
+    stakedAmount: string;
+    fairWeight: string;
+    unfairWeight: string;
+    firstVoteTime: string;
+    lastVoteTime: string;
+    lastFairVoteTime: string;
+    lastUnfairVoteTime: string;
 }
 
-export class PredictionMarketAPI {
+export class VotingAPI {
     private adminKey: any;
     private baseUrl: string;
 
@@ -188,256 +154,131 @@ export class PredictionMarketAPI {
         this.baseUrl = baseUrl;
     }
 
-    // Get all markets
-    async getAllMarkets(): Promise<MarketData[]> {
-        const response = await fetch(`${this.baseUrl}/data/markets`);
+    // Get all topics
+    async getAllTopics(): Promise<TopicData[]> {
+        const response = await fetch(`${this.baseUrl}/data/topics`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get markets data');
+            throw new Error(result.message || 'Failed to get topics data');
         }
         return result.data;
     }
 
-    // Get specific market data
-    async getMarket(marketId: string): Promise<MarketData> {
-        const response = await fetch(`${this.baseUrl}/data/market/${marketId}`);
+    // Get specific topic data
+    async getTopic(topicId: string): Promise<TopicData> {
+        const response = await fetch(`${this.baseUrl}/data/topic/${topicId}`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get market data');
+            throw new Error(result.message || 'Failed to get topic data');
         }
         return result.data;
     }
 
-    // Get recent 20 transactions for specific market
-    async getMarketRecentTransactions(marketId: string): Promise<TransactionData[]> {
-        const response = await fetch(`${this.baseUrl}/data/market/${marketId}/recent`);
+    // Get recent vote events for specific topic
+    async getTopicRecentVotes(topicId: string): Promise<VoteEventData[]> {
+        const response = await fetch(`${this.baseUrl}/data/topic/${topicId}/votes`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get market recent transactions');
+            throw new Error(result.message || 'Failed to get topic votes');
         }
         return result.data;
     }
 
-    // Get player's recent 20 transactions across all markets
-    async getPlayerRecentTransactions(pid1: string, pid2: string): Promise<TransactionData[]> {
-        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/recent`);
+    // Get recent unstake events for specific topic
+    async getTopicRecentUnstakes(topicId: string): Promise<UnstakeEventData[]> {
+        const response = await fetch(`${this.baseUrl}/data/topic/${topicId}/unstakes`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get player recent transactions');
+            throw new Error(result.message || 'Failed to get topic unstakes');
         }
         return result.data;
     }
 
-    // Get player's recent 20 transactions for specific market
-    async getPlayerMarketRecentTransactions(pid1: string, pid2: string, marketId: string): Promise<TransactionData[]> {
-        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/market/${marketId}/recent`);
+    // Get player's recent vote events across all topics
+    async getPlayerRecentVotes(pid1: string, pid2: string): Promise<VoteEventData[]> {
+        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/votes`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get player market recent transactions');
+            throw new Error(result.message || 'Failed to get player votes');
         }
         return result.data;
     }
 
-    // Get player market position
-    async getPlayerMarketPosition(pid1: string, pid2: string, marketId: string): Promise<PlayerMarketPosition> {
-        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/market/${marketId}`);
+    // Get player's topic vote data
+    async getPlayerTopicVote(pid1: string, pid2: string, topicId: string): Promise<PlayerTopicVoteData> {
+        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/topic/${topicId}`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get player market position');
+            throw new Error(result.message || 'Failed to get player topic vote');
         }
         return result.data;
     }
 
-    // Get all player positions across markets
-    async getPlayerAllPositions(pid1: string, pid2: string): Promise<PlayerMarketPosition[]> {
-        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/positions`);
+    // Get all player's topic votes
+    async getPlayerAllTopicVotes(pid1: string, pid2: string): Promise<PlayerTopicVoteData[]> {
+        const response = await fetch(`${this.baseUrl}/data/player/${pid1}/${pid2}/topics`);
         const result = await response.json() as any;
         if (!result.success) {
-            throw new Error(result.message || 'Failed to get player positions');
+            throw new Error(result.message || 'Failed to get player topic votes');
         }
         return result.data;
     }
 
-    // Get market liquidity history for recent 100 counters (only liquidity data)
-    async getMarketLiquidityHistory(marketId: string): Promise<LiquidityHistoryData[]> {
-        const response = await fetch(`${this.baseUrl}/data/market/${marketId}/liquidity`);
-        const result = await response.json() as any;
-        if (!result.success) {
-            throw new Error(result.message || 'Failed to get market liquidity history');
+    // Helper: Calculate vote percentages
+    calculateVotePercentages(topic: TopicData): { fairPercentage: number, unfairPercentage: number } {
+        const totalVotes = BigInt(topic.totalFairVotes) + BigInt(topic.totalUnfairVotes);
+        if (totalVotes === 0n) {
+            return { fairPercentage: 50, unfairPercentage: 50 };
         }
-        return result.data;
+
+        const fairPercentage = Number(BigInt(topic.totalFairVotes) * 10000n / totalVotes) / 100;
+        const unfairPercentage = 100 - fairPercentage;
+
+        return { fairPercentage, unfairPercentage };
     }
 
-    // Calculation functions updated for specific market
-    calculateShares(betType: number, amount: number, yesLiquidity: bigint, noLiquidity: bigint): bigint {
-        const betAmount = BigInt(amount);
-        const fee = (betAmount * PLATFORM_FEE_RATE + FEE_BASIS_POINTS - 1n) / FEE_BASIS_POINTS;
-        const netAmount = betAmount - fee;
-        
-        // AMM calculation: k = x * y
-        const k = yesLiquidity * noLiquidity;
-        
-        if (betType === 1) { // YES bet
-            const newNoLiquidity = noLiquidity + netAmount;
-            const newYesLiquidity = k / newNoLiquidity;
-            return yesLiquidity - newYesLiquidity;
-        } else { // NO bet
-            const newYesLiquidity = yesLiquidity + netAmount;
-            const newNoLiquidity = k / newYesLiquidity;
-            return noLiquidity - newNoLiquidity;
-        }
+    // Helper: Check if topic is active
+    isTopicActive(topic: TopicData, currentCounter: bigint): boolean {
+        return topic.isActive &&
+               currentCounter >= BigInt(topic.startTime) &&
+               currentCounter < BigInt(topic.endTime);
     }
 
-    calculateSellDetails(sellType: number, shares: number, yesLiquidity: bigint, noLiquidity: bigint): { netPayout: bigint, fee: bigint } {
-        const sharesToSell = BigInt(shares);
-        
-        // AMM calculation for selling
-        const k = yesLiquidity * noLiquidity;
-        
-        let grossAmount: bigint;
-        if (sellType === 1) { // Selling YES shares
-            const newYesLiquidity = yesLiquidity + sharesToSell;
-            const newNoLiquidity = k / newYesLiquidity;
-            grossAmount = noLiquidity - newNoLiquidity;
-        } else { // Selling NO shares
-            const newNoLiquidity = noLiquidity + sharesToSell;
-            const newYesLiquidity = k / newNoLiquidity;
-            grossAmount = yesLiquidity - newYesLiquidity;
-        }
-        
-        const fee = (grossAmount * PLATFORM_FEE_RATE + FEE_BASIS_POINTS - 1n) / FEE_BASIS_POINTS;
-        const netPayout = grossAmount - fee;
-        
-        return { netPayout, fee };
-    }
-
-    calculateSellValue(sellType: number, shares: number, yesLiquidity: bigint, noLiquidity: bigint): bigint {
-        const result = this.calculateSellDetails(sellType, shares, yesLiquidity, noLiquidity);
-        return result.netPayout;
-    }
-
-    getBuyPrice(betType: number, amount: number, yesLiquidity: bigint, noLiquidity: bigint): number {
-        const shares = this.calculateShares(betType, amount, yesLiquidity, noLiquidity);
-        if (shares === 0n) return 0;
-        return (amount * 1000000) / Number(shares); // Return price in terms of precision
-    }
-
-    getSellPrice(sellType: number, shares: number, yesLiquidity: bigint, noLiquidity: bigint): number {
-        const payout = this.calculateSellValue(sellType, shares, yesLiquidity, noLiquidity);
-        if (shares === 0) return 0;
-        return (Number(payout) * 1000000) / shares; // Return price in terms of precision
-    }
-
-    calculateMarketImpact(betType: number, amount: number, yesLiquidity: bigint, noLiquidity: bigint): { 
-        currentYesPrice: number, 
-        currentNoPrice: number, 
-        newYesPrice: number, 
-        newNoPrice: number 
-    } {
-        const currentPrices = this.calculatePrices(yesLiquidity, noLiquidity);
-        
-        // Calculate new liquidity after bet
-        const betAmount = BigInt(amount);
-        const fee = (betAmount * PLATFORM_FEE_RATE + FEE_BASIS_POINTS - 1n) / FEE_BASIS_POINTS;
-        const netAmount = betAmount - fee;
-        
-        const k = yesLiquidity * noLiquidity;
-        
-        let newYesLiquidity: bigint, newNoLiquidity: bigint;
-        if (betType === 1) { // YES bet
-            newNoLiquidity = noLiquidity + netAmount;
-            newYesLiquidity = k / newNoLiquidity;
-        } else { // NO bet
-            newYesLiquidity = yesLiquidity + netAmount;
-            newNoLiquidity = k / newYesLiquidity;
-        }
-        
-        const newPrices = this.calculatePrices(newYesLiquidity, newNoLiquidity);
-        
-        return {
-            currentYesPrice: currentPrices.yesPrice,
-            currentNoPrice: currentPrices.noPrice,
-            newYesPrice: newPrices.yesPrice,
-            newNoPrice: newPrices.noPrice
-        };
-    }
-
-    calculateSlippage(betType: number, amount: number, yesLiquidity: bigint, noLiquidity: bigint): number {
-        const impact = this.calculateMarketImpact(betType, amount, yesLiquidity, noLiquidity);
-        
-        if (betType === 1) { // YES bet
-            return ((impact.newYesPrice - impact.currentYesPrice) / impact.currentYesPrice) * 100;
-        } else { // NO bet
-            return ((impact.newNoPrice - impact.currentNoPrice) / impact.currentNoPrice) * 100;
-        }
-    }
-
-    calculatePrices(yesLiquidity: bigint, noLiquidity: bigint): { yesPrice: number, noPrice: number } {
-        const totalLiquidity = yesLiquidity + noLiquidity;
-        if (totalLiquidity === 0n) {
-            return { yesPrice: 0.5, noPrice: 0.5 };
-        }
-        
-        const yesPrice = Number(noLiquidity) / Number(totalLiquidity);
-        const noPrice = Number(yesLiquidity) / Number(totalLiquidity);
-        
-        return { yesPrice, noPrice };
+    // Helper: Check if topic has ended
+    hasTopicEnded(topic: TopicData, currentCounter: bigint): boolean {
+        return currentCounter >= BigInt(topic.endTime);
     }
 }
 
-// Updated transaction builders for multi-market
-export function buildBetTransaction(nonce: number, marketId: bigint, betType: number, amount: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(BET), marketId, BigInt(betType), amount];
+// Transaction builders for voting system
+export function buildCreateTopicTransaction(nonce: number, duration: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(CREATE_TOPIC), duration];
 }
 
-export function buildSellTransaction(nonce: number, marketId: bigint, sellType: number, shares: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(SELL), marketId, BigInt(sellType), shares];
+export function buildVoteTransaction(nonce: number, topicId: bigint, voteType: VoteType, stakeAmount: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(VOTE), topicId, BigInt(voteType), stakeAmount];
 }
 
-export function buildResolveTransaction(nonce: number, marketId: bigint, outcome: boolean): bigint[] {
-    return [BigInt(nonce), BigInt(RESOLVE), marketId, outcome ? 1n : 0n];
+export function buildUnstakeTransaction(nonce: number, topicId: bigint, amount: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(UNSTAKE), topicId, amount];
 }
 
-export function buildClaimTransaction(nonce: number, marketId: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(CLAIM), marketId];
+export function buildCloseTopicTransaction(nonce: number, topicId: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(CLOSE_TOPIC), topicId];
 }
 
-export function buildWithdrawFeesTransaction(nonce: number, marketId: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(WITHDRAW_FEES), marketId];
+export function buildAddManagerTransaction(nonce: number, targetPid1: bigint, targetPid2: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(ADD_MANAGER), targetPid1, targetPid2];
 }
 
-export function buildCreateMarketTransaction(
-    nonce: number,
-    title: string,
-    startTimeOffset: bigint,     // Offset from current counter
-    endTimeOffset: bigint,       // Offset from current counter
-    resolutionTimeOffset: bigint, // Offset from current counter
-    yesLiquidity: bigint,
-    noLiquidity: bigint
-): bigint[] {
-    // Validate title length before creating transaction
-    const titleValidation = validateMarketTitleLength(title);
-    if (!titleValidation.valid) {
-        throw new Error(titleValidation.message);
-    }
-    
-    const titleU64Array = stringToU64Array(title);
-    return [
-        BigInt(nonce),
-        BigInt(CREATE_MARKET),
-        ...titleU64Array,
-        startTimeOffset,
-        endTimeOffset,
-        resolutionTimeOffset,
-        yesLiquidity,
-        noLiquidity
-    ];
+export function buildRemoveManagerTransaction(nonce: number, targetPid1: bigint, targetPid2: bigint): bigint[] {
+    return [BigInt(nonce), BigInt(REMOVE_MANAGER), targetPid1, targetPid2];
 }
 
 export function buildWithdrawTransaction(
-    nonce: number, 
-    amount: bigint, 
-    addressHigh: bigint, 
+    nonce: number,
+    amount: bigint,
+    addressHigh: bigint,
     addressLow: bigint
 ): bigint[] {
     return [BigInt(nonce), BigInt(WITHDRAW), 0n, amount, addressHigh, addressLow];
@@ -457,24 +298,24 @@ export function buildInstallPlayerTransaction(nonce: number): bigint[] {
 }
 
 export async function exampleUsage() {
-    const api = new PredictionMarketAPI();
-    
-    // Get all markets
-    const markets = await api.getAllMarkets();
-    console.log("All markets:", markets);
-    
-    // Get specific market
-    if (markets.length > 0) {
-        const marketId = markets[0].marketId;
-        const market = await api.getMarket(marketId);
-        console.log("Market details:", market);
-        
-        // Get market recent transactions
-        const marketTransactions = await api.getMarketRecentTransactions(marketId);
-        console.log("Market recent transactions:", marketTransactions);
-        
-        // Get market liquidity history
-        const liquidityHistory = await api.getMarketLiquidityHistory(marketId);
-        console.log("Market liquidity history:", liquidityHistory);
+    const api = new VotingAPI();
+
+    // Get all topics
+    const topics = await api.getAllTopics();
+    console.log("All topics:", topics);
+
+    // Get specific topic
+    if (topics.length > 0) {
+        const topicId = topics[0].topicId;
+        const topic = await api.getTopic(topicId);
+        console.log("Topic details:", topic);
+
+        // Calculate vote percentages
+        const percentages = api.calculateVotePercentages(topic);
+        console.log("Vote percentages:", percentages);
+
+        // Get topic votes
+        const votes = await api.getTopicRecentVotes(topicId);
+        console.log("Topic votes:", votes);
     }
-} 
+}

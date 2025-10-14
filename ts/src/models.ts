@@ -16,28 +16,19 @@ export function docToJSON(doc: mongoose.Document) {
     return obj;
 }
 
-// Market info constants for IndexedObject
-export const MARKET_INFO = 1;
-export const LIQUIDITY_HISTORY_INFO = 2;
+// Topic info constants for IndexedObject
+export const TOPIC_INFO = 1;
 
-// ActionType enum removed - no longer needed since liquidity history only tracks snapshots
+// Event type constants
+export const EVENT_INDEXED_OBJECT = 0;
+export const EVENT_VOTE = 1;
+export const EVENT_UNSTAKE = 2;
+export const EVENT_TOPIC_CLOSED = 3;
 
-// 价格计算工具类
-export class PriceCalculator {
-    static calculatePrice(yesLiquidity: bigint, noLiquidity: bigint): { yesPrice: bigint, noPrice: bigint } {
-        const totalLiq = yesLiquidity + noLiquidity;
-        if (totalLiq === 0n) {
-            return { yesPrice: 500000n, noPrice: 500000n }; // 50% each
-        }
-        return {
-            yesPrice: (noLiquidity * 1000000n) / totalLiq,
-            noPrice: (yesLiquidity * 1000000n) / totalLiq
-        };
-    }
-    
-    static calculateTotalLiquidity(yesLiquidity: bigint, noLiquidity: bigint): bigint {
-        return yesLiquidity + noLiquidity;
-    }
+// VoteType enum (matching Rust)
+export enum VoteType {
+    Unfair = 0,
+    Fair = 1,
 }
 
 // IndexedObject class like other projects
@@ -53,10 +44,8 @@ export class IndexedObject {
     }
 
     toObject() {
-        if (this.index === MARKET_INFO) {
-            return MarketData.fromData(this.data);
-        } else if (this.index === LIQUIDITY_HISTORY_INFO) {
-            return LiquidityHistoryEntry.fromData(this.data);
+        if (this.index === TOPIC_INFO) {
+            return TopicData.fromData(this.data);
         } else {
             console.error("Fatal: unexpected object index:", this.index);
             process.exit();
@@ -68,13 +57,13 @@ export class IndexedObject {
     }
 
     static fromEvent(data: BigUint64Array): IndexedObject {
-        // Extract index and data, with marketId as second element for MARKET_INFO
+        // Extract index and data, with topicId as second element for TOPIC_INFO
         const index = Number(data[0]);
-        if (index === MARKET_INFO) {
-            // For market info: [index, marketId, ...market_data]
-            const marketId = data[1];
-            const marketData = Array.from(data.slice(2));
-            return new IndexedObject(index, [marketId, ...marketData]);
+        if (index === TOPIC_INFO) {
+            // For topic info: [index, topicId, ...topic_data]
+            const topicId = data[1];
+            const topicData = Array.from(data.slice(2));
+            return new IndexedObject(index, [topicId, ...topicData]);
         } else {
             // For other types, use normal format
             return new IndexedObject(index, Array.from(data.slice(1)));
@@ -83,270 +72,295 @@ export class IndexedObject {
 
     async storeRelatedObject() {
         let obj = this.toObject() as any;
-        if (this.index === MARKET_INFO) {
-            // Store in main MarketModel using IndexedObject pattern
-            let doc = await MarketModel.findOneAndUpdate({marketId: obj.marketId}, obj, {upsert: true});
-            return doc;
-        } else if (this.index === LIQUIDITY_HISTORY_INFO) {
-            let doc = await LiquidityHistoryModel.findOneAndUpdate(
-                {marketId: obj.marketId, counter: obj.counter}, 
-                obj, 
-                {upsert: true}
-            );
+        if (this.index === TOPIC_INFO) {
+            // Store in main TopicModel using IndexedObject pattern
+            let doc = await TopicModel.findOneAndUpdate({topicId: obj.topicId}, obj, {upsert: true});
             return doc;
         }
     }
 }
 
-// Market data structure matching Rust backend
-export class MarketData {
-    marketId?: bigint;
-    title: bigint[];
+// Topic data structure matching Rust backend
+export class TopicData {
+    topicId?: bigint;
     startTime: bigint;
     endTime: bigint;
-    resolutionTime: bigint;
-    yesLiquidity: bigint;
-    noLiquidity: bigint;
-    prizePool: bigint;
-    totalVolume: bigint;
-    totalYesShares: bigint;
-    totalNoShares: bigint;
-    resolved: boolean;
-    outcome: boolean | null;
-    totalFeesCollected: bigint;
+    isActive: boolean;
+    totalFairVotes: bigint;
+    totalUnfairVotes: bigint;
+    totalFairVoters: bigint;
+    totalUnfairVoters: bigint;
 
     constructor(data: any) {
-        this.title = data.title || [];
         this.startTime = data.startTime || 0n;
         this.endTime = data.endTime || 0n;
-        this.resolutionTime = data.resolutionTime || 0n;
-        this.yesLiquidity = data.yesLiquidity || 0n;
-        this.noLiquidity = data.noLiquidity || 0n;
-        this.prizePool = data.prizePool || 0n;
-        this.totalVolume = data.totalVolume || 0n;
-        this.totalYesShares = data.totalYesShares || 0n;
-        this.totalNoShares = data.totalNoShares || 0n;
-        this.resolved = data.resolved || false;
-        this.outcome = data.outcome;
-        this.totalFeesCollected = data.totalFeesCollected || 0n;
+        this.isActive = data.isActive !== undefined ? data.isActive : true;
+        this.totalFairVotes = data.totalFairVotes || 0n;
+        this.totalUnfairVotes = data.totalUnfairVotes || 0n;
+        this.totalFairVoters = data.totalFairVoters || 0n;
+        this.totalUnfairVoters = data.totalUnfairVoters || 0n;
     }
 
-    static fromData(data: bigint[]): MarketData {
-        // Parse the data array according to Rust MarketData::to_data format
-        // First element is marketId from IndexedObject
+    static fromData(data: bigint[]): TopicData {
+        // Parse the data array according to Rust TopicData::to_data format
+        // First element is topicId from IndexedObject
         let index = 0;
-        const marketId = data[index++];
-        
-        // Read title length and title data
-        const titleLen = Number(data[index++]);
-        const title = data.slice(index, index + titleLen);
-        index += titleLen;
-        
+        const topicId = data[index++];
+
         const startTime = data[index++];
         const endTime = data[index++];
-        const resolutionTime = data[index++];
-        const yesLiquidity = data[index++];
-        const noLiquidity = data[index++];
-        const prizePool = data[index++];
-        const totalVolume = data[index++];
-        const totalYesShares = data[index++];
-        const totalNoShares = data[index++];
-        const resolved = data[index++] === 1n;
-        const outcomeValue = data[index++];
-        const outcome = outcomeValue === 0n ? null : (outcomeValue === 2n ? true : false);
-        const totalFeesCollected = data[index++];
+        const isActive = data[index++] !== 0n;
+        const totalFairVotes = data[index++];
+        const totalUnfairVotes = data[index++];
+        const totalFairVoters = data[index++];
+        const totalUnfairVoters = data[index++];
 
-        const marketData = new MarketData({
-            title,
+        const topicData = new TopicData({
             startTime,
             endTime,
-            resolutionTime,
-            yesLiquidity,
-            noLiquidity,
-            prizePool,
-            totalVolume,
-            totalYesShares,
-            totalNoShares,
-            resolved,
-            outcome,
-            totalFeesCollected
+            isActive,
+            totalFairVotes,
+            totalUnfairVotes,
+            totalFairVoters,
+            totalUnfairVoters
         });
-        marketData.marketId = marketId;
-        return marketData;
+        topicData.topicId = topicId;
+        return topicData;
+    }
+
+    // Helper methods for topic status (time-based)
+    isPending(currentCounter: bigint): boolean {
+        return currentCounter < this.startTime;
+    }
+
+    isActiveByTime(currentCounter: bigint): boolean {
+        return currentCounter >= this.startTime && currentCounter < this.endTime;
+    }
+
+    isEnded(currentCounter: bigint): boolean {
+        return currentCounter >= this.endTime;
+    }
+
+    canVote(currentCounter: bigint): boolean {
+        return this.isActive && this.isActiveByTime(currentCounter);
+    }
+
+    canClose(currentCounter: bigint): boolean {
+        return this.isActive && this.isEnded(currentCounter);
+    }
+
+    // Get status string for API compatibility
+    getStatusString(currentCounter: bigint): string {
+        if (this.isPending(currentCounter)) return 'PENDING';
+        if (this.isActiveByTime(currentCounter) && this.isActive) return 'ACTIVE';
+        if (!this.isActive) return 'CLOSED';
+        if (this.isEnded(currentCounter)) return 'ENDED';
+        return 'UNKNOWN';
+    }
+
+    // Calculate vote percentages
+    getVotePercentages(): { fairPercentage: number, unfairPercentage: number } {
+        const totalVotes = this.totalFairVotes + this.totalUnfairVotes;
+        if (totalVotes === 0n) {
+            return { fairPercentage: 50, unfairPercentage: 50 };
+        }
+
+        const fairPercentage = Number(this.totalFairVotes * 10000n / totalVotes) / 100;
+        const unfairPercentage = 100 - fairPercentage;
+
+        return { fairPercentage, unfairPercentage };
+    }
+
+    // Get total votes count
+    getTotalVotes(): bigint {
+        return this.totalFairVotes + this.totalUnfairVotes;
+    }
+
+    // Get total voters count
+    getTotalVoters(): bigint {
+        return this.totalFairVoters + this.totalUnfairVoters;
+    }
+
+    // Check if there's a clear winner (>50%)
+    hasClearWinner(): boolean {
+        const totalVotes = this.getTotalVotes();
+        if (totalVotes === 0n) return false;
+
+        // Check if either side has > 50%
+        return this.totalFairVotes * 2n > totalVotes || this.totalUnfairVotes * 2n > totalVotes;
+    }
+
+    // Get winning side (if clear winner exists)
+    getWinner(): 'FAIR' | 'UNFAIR' | 'TIE' {
+        const totalVotes = this.getTotalVotes();
+        if (totalVotes === 0n) return 'TIE';
+
+        if (this.totalFairVotes > this.totalUnfairVotes) return 'FAIR';
+        if (this.totalUnfairVotes > this.totalFairVotes) return 'UNFAIR';
+        return 'TIE';
     }
 }
 
-// Liquidity History Entry - simplified to only track liquidity snapshots
-export class LiquidityHistoryEntry {
-    marketId: bigint;
-    counter: bigint;
-    yesLiquidity: bigint;
-    noLiquidity: bigint;
-
-    constructor(data: any) {
-        this.marketId = data.marketId;
-        this.counter = data.counter;
-        this.yesLiquidity = data.yesLiquidity;
-        this.noLiquidity = data.noLiquidity;
-    }
-
-    static fromData(data: bigint[]): LiquidityHistoryEntry {
-        return new LiquidityHistoryEntry({
-            marketId: data[0],
-            counter: data[1],
-            yesLiquidity: data[2],
-            noLiquidity: data[3]
-        });
-    }
-}
-
-// Market Object Schema for IndexedObject pattern - main storage
-const marketObjectSchema = new mongoose.Schema({
-    marketId: { type: BigInt, required: true, unique: true },
-    title: { type: [BigInt], required: true },
+// Topic Object Schema for IndexedObject pattern - main storage
+const topicObjectSchema = new mongoose.Schema({
+    topicId: { type: BigInt, required: true, unique: true },
     startTime: { type: BigInt, required: true },
     endTime: { type: BigInt, required: true },
-    resolutionTime: { type: BigInt, required: true },
-    yesLiquidity: { type: BigInt, required: true },
-    noLiquidity: { type: BigInt, required: true },
-    prizePool: { type: BigInt, default: 0n },
-    totalVolume: { type: BigInt, default: 0n },
-    totalYesShares: { type: BigInt, default: 0n },
-    totalNoShares: { type: BigInt, default: 0n },
-    resolved: { type: Boolean, default: false },
-    outcome: { type: Boolean, default: null },
-    totalFeesCollected: { type: BigInt, default: 0n },
+    isActive: { type: Boolean, default: true },
+    totalFairVotes: { type: BigInt, default: 0n },
+    totalUnfairVotes: { type: BigInt, default: 0n },
+    totalFairVoters: { type: BigInt, default: 0n },
+    totalUnfairVoters: { type: BigInt, default: 0n },
 });
 
-marketObjectSchema.pre('init', ObjectEvent.uint64FetchPlugin);
+topicObjectSchema.pre('init', ObjectEvent.uint64FetchPlugin);
 
-// Liquidity History Schema - simplified snapshots
-const liquidityHistorySchema = new mongoose.Schema({
-    marketId: { type: BigInt, required: true },
-    counter: { type: BigInt, required: true },
-    yesLiquidity: { type: BigInt, required: true },
-    noLiquidity: { type: BigInt, required: true },
-});
-
-liquidityHistorySchema.pre('init', ObjectEvent.uint64FetchPlugin);
-liquidityHistorySchema.index({ marketId: 1, counter: 1 }, { unique: true });
-liquidityHistorySchema.index({ marketId: 1, counter: -1 });
-
-// Multi-Market Bet Interface
-export interface Bet {
-    index: bigint;
-    pid: bigint[],
-    marketId: bigint,
-    betType: number,
-    amount: bigint,
-    shares: bigint,
-    counter: bigint,
-}
-
-// Bet Schema - updated for multi-market
-const betSchema = new mongoose.Schema<Bet>({
-    index: { type: BigInt, required: true, unique: true},
-    pid: { type: [BigInt], required: true },
-    marketId: { type: BigInt, required: true },
-    betType: { type: Number, required: true }, // 0 = NO, 1 = YES
-    amount: { type: BigInt, required: true },
-    shares: { type: BigInt, required: true },
-    counter: { type: BigInt, required: true}
-});
-
-betSchema.pre('init', ObjectEvent.uint64FetchPlugin);
-betSchema.index({ pid: 1 });
-betSchema.index({ marketId: 1 });
-betSchema.index({ counter: -1 });
-
-// Player Market Position Interface
-interface PlayerMarketPosition {
+// Vote Event Interface
+export interface VoteEvent {
     pid: bigint[];
-    marketId: bigint;
-    yesShares: bigint;
-    noShares: bigint;
-    claimed: boolean;
+    topicId: bigint;
+    voteType: VoteType;
+    stakeAmount: bigint;
+    counter: bigint;
 }
 
-// Player Market Position Schema
-const playerMarketPositionSchema = new mongoose.Schema<PlayerMarketPosition>({
+// Vote Event Schema
+const voteEventSchema = new mongoose.Schema<VoteEvent>({
     pid: { type: [BigInt], required: true },
-    marketId: { type: BigInt, required: true },
-    yesShares: { type: BigInt, default: 0n },
-    noShares: { type: BigInt, default: 0n },
-    claimed: { type: Boolean, default: false }
+    topicId: { type: BigInt, required: true },
+    voteType: { type: Number, required: true }, // 0 = Unfair, 1 = Fair
+    stakeAmount: { type: BigInt, required: true },
+    counter: { type: BigInt, required: true }
 });
 
-playerMarketPositionSchema.pre('init', ObjectEvent.uint64FetchPlugin);
-playerMarketPositionSchema.index({ pid: 1, marketId: 1 }, { unique: true });
+voteEventSchema.pre('init', ObjectEvent.uint64FetchPlugin);
+voteEventSchema.index({ pid: 1 });
+voteEventSchema.index({ topicId: 1 });
+voteEventSchema.index({ counter: -1 });
 
-// Main market model using IndexedObject pattern
-export const MarketModel = mongoose.model('Market', marketObjectSchema);
-export const LiquidityHistoryModel = mongoose.model('LiquidityHistory', liquidityHistorySchema);
-export const BetModel = mongoose.model('Bet', betSchema);
-export const PlayerMarketPositionModel = mongoose.model('PlayerMarketPosition', playerMarketPositionSchema);
+// Unstake Event Interface
+export interface UnstakeEvent {
+    pid: bigint[];
+    topicId: bigint;
+    amount: bigint;
+    counter: bigint;
+}
 
-// Event handling classes for BET events only (MarketEvent removed as unused)
+// Unstake Event Schema
+const unstakeEventSchema = new mongoose.Schema<UnstakeEvent>({
+    pid: { type: [BigInt], required: true },
+    topicId: { type: BigInt, required: true },
+    amount: { type: BigInt, required: true },
+    counter: { type: BigInt, required: true }
+});
 
-export class BetEvent {
-    index: bigint;
+unstakeEventSchema.pre('init', ObjectEvent.uint64FetchPlugin);
+unstakeEventSchema.index({ pid: 1 });
+unstakeEventSchema.index({ topicId: 1 });
+unstakeEventSchema.index({ counter: -1 });
+
+// Player Topic Vote Interface
+export interface PlayerTopicVote {
+    pid: bigint[];
+    topicId: bigint;
+    stakedAmount: bigint;
+    fairWeight: bigint;
+    unfairWeight: bigint;
+    firstVoteTime: bigint;
+    lastVoteTime: bigint;
+    lastFairVoteTime: bigint;
+    lastUnfairVoteTime: bigint;
+}
+
+// Player Topic Vote Schema
+const playerTopicVoteSchema = new mongoose.Schema<PlayerTopicVote>({
+    pid: { type: [BigInt], required: true },
+    topicId: { type: BigInt, required: true },
+    stakedAmount: { type: BigInt, default: 0n },
+    fairWeight: { type: BigInt, default: 0n },
+    unfairWeight: { type: BigInt, default: 0n },
+    firstVoteTime: { type: BigInt, default: 0n },
+    lastVoteTime: { type: BigInt, default: 0n },
+    lastFairVoteTime: { type: BigInt, default: 0n },
+    lastUnfairVoteTime: { type: BigInt, default: 0n }
+});
+
+playerTopicVoteSchema.pre('init', ObjectEvent.uint64FetchPlugin);
+playerTopicVoteSchema.index({ pid: 1, topicId: 1 }, { unique: true });
+
+// Main topic model using IndexedObject pattern
+export const TopicModel = mongoose.model('Topic', topicObjectSchema);
+export const VoteEventModel = mongoose.model('VoteEvent', voteEventSchema);
+export const UnstakeEventModel = mongoose.model('UnstakeEvent', unstakeEventSchema);
+export const PlayerTopicVoteModel = mongoose.model('PlayerTopicVote', playerTopicVoteSchema);
+
+// Event handling classes
+
+export class VoteEventData {
     data: bigint[];
-    constructor(
-        index: bigint, data: bigint[]
-    ) {
-        this.index = index;
+    constructor(data: bigint[]) {
         this.data = data;
     }
 
-    static fromEvent(data: BigUint64Array): BetEvent {
-        // For BetEvent, the data directly contains the 8 elements we need
-        // [txid, pid1, pid2, market_id, bet_type, amount, shares, counter]
-        return new BetEvent(0n, Array.from(data));
+    static fromEvent(data: BigUint64Array): VoteEventData {
+        // Vote event format: [pid_0, pid_1, topic_id, vote_type, stake_amount, counter]
+        return new VoteEventData(Array.from(data));
     }
 
-    toObject(): Bet {
-        // Add data length validation
-        if (this.data.length < 8) {
-            console.error("BetEvent data length insufficient:", this.data.length, "expected 8, data:", this.data);
-            throw new Error(`Invalid BetEvent data length: ${this.data.length}, expected 8`);
+    toObject(): VoteEvent {
+        // Validate data length
+        if (this.data.length < 6) {
+            console.error("VoteEvent data length insufficient:", this.data.length, "expected 6, data:", this.data);
+            throw new Error(`Invalid VoteEvent data length: ${this.data.length}, expected 6`);
         }
-        
-        // Event data format differs between bet and sell:
-        // BET:  [txid, pid1, pid2, market_id, bet_type, amount, shares, counter]
-        // SELL: [txid, pid1, pid2, market_id, sell_type+10, shares, payout, counter]
-        const betType = Number(this.data[4]);
-        const isSell = betType >= 10;
-        
-        // Validate betType range
-        if (betType < 0 || betType > 12) {
-            console.error("Invalid betType:", betType, "data:", this.data);
-            throw new Error(`Invalid betType: ${betType}`);
-        }
-        
+
         return {
-            index: this.data[0], // txid
-            pid: [this.data[1], this.data[2]], // pid1, pid2
-            marketId: this.data[3], // market_id
-            betType: betType,
-            amount: isSell ? this.data[6] : this.data[5], // For sell: use payout as amount
-            shares: isSell ? this.data[5] : this.data[6], // For sell: data[5] is shares sold
-            counter: this.data[7],
+            pid: [this.data[0], this.data[1]],
+            topicId: this.data[2],
+            voteType: Number(this.data[3]),
+            stakeAmount: this.data[4],
+            counter: this.data[5],
         };
     }
 }
 
-// Global State Interface for tracking all markets
+export class UnstakeEventData {
+    data: bigint[];
+    constructor(data: bigint[]) {
+        this.data = data;
+    }
+
+    static fromEvent(data: BigUint64Array): UnstakeEventData {
+        // Unstake event format: [pid_0, pid_1, topic_id, amount, counter]
+        return new UnstakeEventData(Array.from(data));
+    }
+
+    toObject(): UnstakeEvent {
+        // Validate data length
+        if (this.data.length < 5) {
+            console.error("UnstakeEvent data length insufficient:", this.data.length, "expected 5, data:", this.data);
+            throw new Error(`Invalid UnstakeEvent data length: ${this.data.length}, expected 5`);
+        }
+
+        return {
+            pid: [this.data[0], this.data[1]],
+            topicId: this.data[2],
+            amount: this.data[3],
+            counter: this.data[4],
+        };
+    }
+}
+
+// Global State Interface for tracking all topics
 interface GlobalState {
     counter: bigint;
-    marketIds: bigint[];
-    nextMarketId: bigint;
+    nextTopicId: bigint;
     totalPlayers: bigint;
 }
 
 const globalStateSchema = new mongoose.Schema<GlobalState>({
     counter: { type: BigInt, required: true },
-    marketIds: { type: [BigInt], required: true },
-    nextMarketId: { type: BigInt, required: true },
+    nextTopicId: { type: BigInt, required: true },
     totalPlayers: { type: BigInt, required: true }
 });
 
@@ -354,10 +368,26 @@ globalStateSchema.pre('init', ObjectEvent.uint64FetchPlugin);
 
 export const GlobalStateModel = mongoose.model('GlobalState', globalStateSchema);
 
-// Helper function to convert u64 array to string (for market titles)
+// Helper function to convert string to u64 array (for compatibility)
+export function stringToU64Array(str: string): bigint[] {
+    const bytes = new TextEncoder().encode(str);
+    const result: bigint[] = [];
+
+    for (let i = 0; i < bytes.length; i += 8) {
+        let value = 0n;
+        for (let j = 0; j < 8 && i + j < bytes.length; j++) {
+            value |= BigInt(bytes[i + j]) << BigInt(j * 8);
+        }
+        result.push(value);
+    }
+
+    return result;
+}
+
+// Helper function to convert u64 array to string
 export function u64ArrayToString(u64Array: bigint[]): string {
     let bytes: number[] = [];
-    
+
     for (const value of u64Array) {
         for (let i = 0; i < 8; i++) {
             const byte = Number((value >> BigInt(i * 8)) & 0xFFn);
@@ -368,43 +398,6 @@ export function u64ArrayToString(u64Array: bigint[]): string {
             }
         }
     }
-    
+
     return new TextDecoder().decode(new Uint8Array(bytes));
 }
-
-// Helper function to convert string to u64 array (for market titles)
-export function stringToU64Array(str: string): bigint[] {
-    const bytes = new TextEncoder().encode(str);
-    const result: bigint[] = [];
-    
-    for (let i = 0; i < bytes.length; i += 8) {
-        let value = 0n;
-        for (let j = 0; j < 8 && i + j < bytes.length; j++) {
-            value |= BigInt(bytes[i + j]) << BigInt(j * 8);
-        }
-        result.push(value);
-    }
-    
-    return result;
-}
-
-// Market title length validation
-export function validateMarketTitleLength(title: string): { valid: boolean; message?: string; u64Count?: number } {
-    const u64Array = stringToU64Array(title);
-    const MAX_TITLE_U64_COUNT = 9; // Command length limit: 1 + title_len + 5 < 16, so title_len < 10, max value is 9
-    
-    if (u64Array.length > MAX_TITLE_U64_COUNT) {
-        return {
-            valid: false,
-            message: `Title too long: ${u64Array.length} u64s (max: ${MAX_TITLE_U64_COUNT}). Current title: "${title}" (${title.length} chars, ${new TextEncoder().encode(title).length} bytes)`,
-            u64Count: u64Array.length
-        };
-    }
-    
-    return {
-        valid: true,
-        u64Count: u64Array.length
-    };
-}
-
-
