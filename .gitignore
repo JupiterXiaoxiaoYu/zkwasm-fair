@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+pkg/
+ts/dist/
+ts/node_modules/ 
+.env
+**/node_modules
+**/*.js.map
+**/*.js
+*.md
+!README.md
