@@ -253,7 +253,10 @@ fn handle_unstake(
     let (_is_expired, was_updated) = topic.check_and_mark_expired(counter);
 
     if was_updated {
+        // Topic expired and state was updated - store it and emit events
+        TopicManager::update_topic(topic_id, &topic);
         emit_topic_closed_event(topic_id, counter);
+        emit_topic_indexed_object(&topic, topic_id);
     }
 
     // Check if topic is expired/closed

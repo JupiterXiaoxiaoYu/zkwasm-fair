@@ -103,9 +103,11 @@ export class TopicData {
 
     static fromData(data: bigint[]): TopicData {
         // Parse the data array according to Rust TopicData::to_data format
-        // First element is topicId from IndexedObject
+        // Event format: [TOPIC_INFO, topic_id, id, start_time, end_time, is_active, ...]
+        // After IndexedObject.fromEvent: [topic_id, id, start_time, end_time, is_active, ...]
         let index = 0;
-        const topicId = data[index++];
+        const topicId = data[index++];      // topic_id from event
+        const id = data[index++];            // id from to_data (same as topic_id, skip it)
 
         const startTime = data[index++];
         const endTime = data[index++];
