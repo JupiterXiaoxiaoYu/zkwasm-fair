@@ -22,7 +22,65 @@ await service.initialize();
 
 let txStateManager = new TxStateManager(merkleRootToBeHexString(service.merkleRoot));
 
+const VOTE_COMMAND = 1n;
+
+// Front end
+/*
+public async sendVote(address, signature, topicid): Promise<any> {
+    try {
+      let resp:any = await XXX call vote
+      for (let i=0; i<5; i++) {//detect job status with 1 sec delay
+        await delay(1000);
+        let jobStatus;
+        try {
+            jobStatus = await this.queryJobStatus(resp.jobid);
+            if(jobStatus.finishedOn == undefined) {
+              throw Error("WaitingForProcess");
+            }
+        } catch(e) {
+          continue
+        }
+        if (jobStatus) {
+          if (jobStatus.finishedOn != undefined && jobStatus.failedReason == undefined ) {
+            return jobStatus.returnvalue;
+          } else {
+            throw Error(jobStatus.failedReason)
+          }
+        }
+      }
+      throw Error("MonitorTransactionFail");
+    } catch(e) {
+      //console.log(e);
+      throw e;
+    }
+  }
+*/
+
+
 function extra(app: Express) {
+    app.post('/vote', async (req, res) => {
+      const value = req.body;
+      // let signature = XXX
+      // let addr = XXX
+      let topicId = BigInt(value.topicId);
+      // verifyErcSignature(topic, addr, signature);
+      let fair = BigInt(value.fair);
+
+      try {
+        let balance = verify_and_get_balance();
+        let signatureValue = sign(createCommand(0n, VOTE_COMMAND, [topicId, fair]), get_server_admin_key());
+        const job = await service.queue!.add('transaction', { value });
+        res.status(201).send({
+            success: true,
+            jobid: job.id
+        });
+        }
+      } catch (error) {
+        console.error('Error adding job to the queue:', error);
+        res.status(500).send('Failed to add job to the queue');
+      }
+    });
+
     // Get all topics
     app.get("/data/topics", async (req: any, res) => {
         try {
