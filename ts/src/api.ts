@@ -8,18 +8,16 @@ export const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3000";
 // Command constants - updated for voting system
 const TICK = 0;
 const INSTALL_PLAYER = 1;
-const WITHDRAW = 2;
-const DEPOSIT = 3;
 const ADD_MANAGER = 4;
 const REMOVE_MANAGER = 5;
 const CREATE_TOPIC = 6;
 const VOTE = 7;
-const UNSTAKE = 8;
 const CLOSE_TOPIC = 9;
+// WITHDRAW (2), DEPOSIT (3), UNSTAKE (8) removed - no balance management
 
 export class VotingPlayer extends PlayerConvention {
     constructor(key: string, rpc: ZKWasmAppRpc) {
-        super(key, rpc, BigInt(DEPOSIT), BigInt(WITHDRAW));
+        super(key, rpc, 0n, 0n);  // No deposit/withdraw commands
         this.processingKey = key;
         this.rpc = rpc;
     }
@@ -56,17 +54,10 @@ export class VotingPlayer extends PlayerConvention {
         return await this.sendTransactionWithCommand(cmd);
     }
 
-    // Vote on a topic
-    async vote(topicId: bigint, voteType: VoteType, stakeAmount: bigint) {
+    // Vote on a topic (Admin only - submits vote on behalf of user after signature verification)
+    async voteOnBehalfOf(playerId: [bigint, bigint], topicId: bigint, voteType: VoteType, voteWeight: bigint) {
         let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(VOTE), [topicId, BigInt(voteType), stakeAmount]);
-        return await this.sendTransactionWithCommand(cmd);
-    }
-
-    // Unstake from a topic
-    async unstake(topicId: bigint, amount: bigint) {
-        let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(UNSTAKE), [topicId, amount]);
+        let cmd = createCommand(nonce, BigInt(VOTE), [playerId[0], playerId[1], topicId, BigInt(voteType), voteWeight]);
         return await this.sendTransactionWithCommand(cmd);
     }
 
@@ -90,20 +81,6 @@ export class VotingPlayer extends PlayerConvention {
         let cmd = createCommand(nonce, BigInt(REMOVE_MANAGER), [targetPid1, targetPid2]);
         return await this.sendTransactionWithCommand(cmd);
     }
-
-    // Withdraw funds
-    async withdrawFunds(amount: bigint, addressHigh: bigint, addressLow: bigint) {
-        let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(WITHDRAW), [0n, amount, addressHigh, addressLow]);
-        return await this.sendTransactionWithCommand(cmd);
-    }
-
-    // Deposit funds (admin only)
-    async depositFunds(amount: bigint, targetPid1: bigint, targetPid2: bigint) {
-        let nonce = await this.getNonce();
-        let cmd = createCommand(nonce, BigInt(DEPOSIT), [targetPid1, targetPid2, 0n, amount]);
-        return await this.sendTransactionWithCommand(cmd);
-    }
 }
 
 // Updated interfaces for voting system
@@ -122,27 +99,16 @@ export interface VoteEventData {
     pid: string[];
     topicId: string;
     voteType: VoteType;
-    stakeAmount: string;
-    counter: string;
-}
-
-export interface UnstakeEventData {
-    pid: string[];
-    topicId: string;
-    amount: string;
+    voteWeight: string;  // Changed from stakeAmount
     counter: string;
 }
 
 export interface PlayerTopicVoteData {
     pid: string[];
     topicId: string;
-    stakedAmount: string;
-    fairWeight: string;
-    unfairWeight: string;
-    firstVoteTime: string;
-    lastVoteTime: string;
-    lastFairVoteTime: string;
-    lastUnfairVoteTime: string;
+    voteWeight: string;   // ERC20 balance at vote time
+    voteType: number;     // 0 = not voted, 1 = Fair, 2 = Unfair
+    voteTime: string;     // Counter when voted
 }
 
 export class VotingAPI {
@@ -184,15 +150,6 @@ export class VotingAPI {
         return result.data;
     }
 
-    // Get recent unstake events for specific topic
-    async getTopicRecentUnstakes(topicId: string): Promise<UnstakeEventData[]> {
-        const response = await fetch(`${this.baseUrl}/data/topic/${topicId}/unstakes`);
-        const result = await response.json() as any;
-        if (!result.success) {
-            throw new Error(result.message || 'Failed to get topic unstakes');
-        }
-        return result.data;
-    }
 
     // Get player's recent vote events across all topics
     async getPlayerRecentVotes(pid1: string, pid2: string): Promise<VoteEventData[]> {
@@ -255,12 +212,14 @@ export function buildCreateTopicTransaction(nonce: number, duration: bigint): bi
     return [BigInt(nonce), BigInt(CREATE_TOPIC), duration];
 }
 
-export function buildVoteTransaction(nonce: number, topicId: bigint, voteType: VoteType, stakeAmount: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(VOTE), topicId, BigInt(voteType), stakeAmount];
-}
-
-export function buildUnstakeTransaction(nonce: number, topicId: bigint, amount: bigint): bigint[] {
-    return [BigInt(nonce), BigInt(UNSTAKE), topicId, amount];
+export function buildVoteTransaction(
+    nonce: number,
+    playerId: [bigint, bigint],
+    topicId: bigint,
+    voteType: VoteType,
+    voteWeight: bigint
+): bigint[] {
+    return [BigInt(nonce), BigInt(VOTE), playerId[0], playerId[1], topicId, BigInt(voteType), voteWeight];
 }
 
 export function buildCloseTopicTransaction(nonce: number, topicId: bigint): bigint[] {
@@ -273,24 +232,6 @@ export function buildAddManagerTransaction(nonce: number, targetPid1: bigint, ta
 
 export function buildRemoveManagerTransaction(nonce: number, targetPid1: bigint, targetPid2: bigint): bigint[] {
     return [BigInt(nonce), BigInt(REMOVE_MANAGER), targetPid1, targetPid2];
-}
-
-export function buildWithdrawTransaction(
-    nonce: number,
-    amount: bigint,
-    addressHigh: bigint,
-    addressLow: bigint
-): bigint[] {
-    return [BigInt(nonce), BigInt(WITHDRAW), 0n, amount, addressHigh, addressLow];
-}
-
-export function buildDepositTransaction(
-    nonce: number,
-    targetPid1: bigint,
-    targetPid2: bigint,
-    amount: bigint
-): bigint[] {
-    return [BigInt(nonce), BigInt(DEPOSIT), targetPid1, targetPid2, 0n, amount];
 }
 
 export function buildInstallPlayerTransaction(nonce: number): bigint[] {

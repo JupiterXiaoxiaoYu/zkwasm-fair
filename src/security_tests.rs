@@ -55,49 +55,8 @@ mod security_tests {
     }
 
     // ===== Voting System Specific Tests =====
-
-    #[test]
-    fn test_balance_operations_safety() {
-        // Test balance operations similar to voting deposit/withdraw
-        let initial_balance = 1_000_000u64;
-
-        // Simulate deposit
-        let result = safe_add(initial_balance, 500_000);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1_500_000);
-
-        // Simulate withdraw
-        let result = safe_sub(initial_balance, 300_000);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 700_000);
-
-        // Attempt to withdraw more than balance
-        let result = safe_sub(initial_balance, 2_000_000);
-        assert_eq!(result, Err(ERROR_UNDERFLOW));
-    }
-
-    #[test]
-    fn test_stake_amount_safety() {
-        // Test stake operations for voting
-        let user_balance = 1_000_000u64;
-        let stake_amount = 100_000u64;
-
-        // User stakes tokens
-        let remaining_balance = safe_sub(user_balance, stake_amount);
-        assert!(remaining_balance.is_ok());
-        assert_eq!(remaining_balance.unwrap(), 900_000);
-
-        // Test staking more than balance
-        let large_stake = 2_000_000u64;
-        let result = safe_sub(user_balance, large_stake);
-        assert_eq!(result, Err(ERROR_UNDERFLOW));
-
-        // Test adding to existing stake
-        let existing_stake = 50_000u64;
-        let new_stake = safe_add(existing_stake, stake_amount);
-        assert!(new_stake.is_ok());
-        assert_eq!(new_stake.unwrap(), 150_000);
-    }
+    // Note: Balance/deposit/withdraw/stake/unstake tests removed
+    // New architecture uses external ERC20 balance with single permanent vote per topic
 
     #[test]
     fn test_vote_weight_calculations() {
@@ -109,14 +68,20 @@ mod security_tests {
         assert!(total_fair_weight.is_ok());
         assert_eq!(total_fair_weight.unwrap(), 1_250_000);
 
-        // Test removing vote weight
-        let removed_weight = safe_sub(total_fair_weight.unwrap(), 100_000);
-        assert!(removed_weight.is_ok());
-        assert_eq!(removed_weight.unwrap(), 1_150_000);
+        // Test adding more votes (new architecture: votes are permanent, no removal)
+        let another_vote = 100_000u64;
+        let updated_weight = safe_add(total_fair_weight.unwrap(), another_vote);
+        assert!(updated_weight.is_ok());
+        assert_eq!(updated_weight.unwrap(), 1_350_000);
 
-        // Test overflow on massive vote weight
+        // Test overflow on massive vote weight accumulation
         let huge_weight = u64::MAX / 2;
-        let result = safe_add(huge_weight, huge_weight + 1);
+        let result = safe_add(huge_weight, huge_weight);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), u64::MAX - 1);
+
+        // Verify adding 2 more causes overflow
+        let result = safe_add(huge_weight + huge_weight, 2);
         assert_eq!(result, Err(ERROR_OVERFLOW));
     }
 
@@ -161,29 +126,6 @@ mod security_tests {
     }
 
     #[test]
-    fn test_proportional_unstake_calculation() {
-        // Simulate proportional unstake calculation using u128
-        let fair_weight = 600_000u64;
-        let unfair_weight = 400_000u64;
-        let total_weight = 1_000_000u64;
-        let unstake_amount = 100_000u64;
-
-        // Calculate proportional unfair removal
-        let unfair_to_remove = (unfair_weight as u128 * unstake_amount as u128 / total_weight as u128) as u64;
-        assert_eq!(unfair_to_remove, 40_000);
-
-        let fair_to_remove = unstake_amount - unfair_to_remove;
-        assert_eq!(fair_to_remove, 60_000);
-
-        // Verify subtraction works
-        let new_unfair = safe_sub(unfair_weight, unfair_to_remove);
-        assert_eq!(new_unfair.unwrap(), 360_000);
-
-        let new_fair = safe_sub(fair_weight, fair_to_remove);
-        assert_eq!(new_fair.unwrap(), 540_000);
-    }
-
-    #[test]
     fn test_edge_cases_for_voting() {
         // Test edge case: single token vote
         let result = safe_add(0, 1);
@@ -204,7 +146,7 @@ mod security_tests {
 
     #[test]
     fn test_multiple_votes_accumulation() {
-        // Simulate multiple sequential votes
+        // Simulate multiple different users voting on a topic
         let mut total_votes = 0u64;
         let vote_amounts = vec![100_000, 250_000, 75_000, 500_000];
 
@@ -215,72 +157,15 @@ mod security_tests {
         }
 
         assert_eq!(total_votes, 925_000);
-
-        // Test partial unstake
-        let unstake = 200_000u64;
-        let result = safe_sub(total_votes, unstake);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 725_000);
-    }
-
-    #[test]
-    fn test_realistic_voting_scenario() {
-        // Simulate a realistic voting scenario
-
-        // User starts with balance
-        let mut user_balance = 10_000_000u64;
-
-        // User stakes 1M tokens to vote Fair
-        let stake1 = 1_000_000u64;
-        user_balance = safe_sub(user_balance, stake1).unwrap();
-        assert_eq!(user_balance, 9_000_000);
-
-        let mut fair_weight = stake1;
-        let mut unfair_weight = 0u64;
-
-        // User stakes another 500K to vote Fair
-        let stake2 = 500_000u64;
-        user_balance = safe_sub(user_balance, stake2).unwrap();
-        fair_weight = safe_add(fair_weight, stake2).unwrap();
-        assert_eq!(user_balance, 8_500_000);
-        assert_eq!(fair_weight, 1_500_000);
-
-        // User stakes 300K to vote Unfair
-        let stake3 = 300_000u64;
-        user_balance = safe_sub(user_balance, stake3).unwrap();
-        unfair_weight = safe_add(unfair_weight, stake3).unwrap();
-        assert_eq!(user_balance, 8_200_000);
-        assert_eq!(unfair_weight, 300_000);
-
-        // Calculate total staked
-        let total_staked = safe_add(fair_weight, unfair_weight).unwrap();
-        assert_eq!(total_staked, 1_800_000);
-
-        // User unstakes 900K proportionally
-        let unstake_amount = 900_000u64;
-        let total_weight = total_staked;
-
-        let unfair_to_remove = (unfair_weight as u128 * unstake_amount as u128 / total_weight as u128) as u64;
-        let fair_to_remove = unstake_amount - unfair_to_remove;
-
-        unfair_weight = safe_sub(unfair_weight, unfair_to_remove).unwrap();
-        fair_weight = safe_sub(fair_weight, fair_to_remove).unwrap();
-        user_balance = safe_add(user_balance, unstake_amount).unwrap();
-
-        // Verify final state
-        assert_eq!(user_balance, 9_100_000);
-        assert_eq!(fair_weight + unfair_weight, 900_000);
     }
 
     #[test]
     fn test_topic_statistics_updates() {
-        // Test topic vote statistics updates
+        // Test topic vote statistics updates (new architecture: add only, no removal)
         let mut total_fair_votes = 5_000_000u64;
-        let mut total_unfair_votes = 3_000_000u64;
         let mut total_fair_voters = 50u64;
-        let mut total_unfair_voters = 30u64;
 
-        // New fair vote
+        // New fair vote (each vote is permanent)
         let new_vote_weight = 100_000u64;
         total_fair_votes = safe_add(total_fair_votes, new_vote_weight).unwrap();
         total_fair_voters = safe_add(total_fair_voters, 1).unwrap();
@@ -288,13 +173,13 @@ mod security_tests {
         assert_eq!(total_fair_votes, 5_100_000);
         assert_eq!(total_fair_voters, 51);
 
-        // Remove a vote (unstake from active topic)
-        let remove_weight = 50_000u64;
-        total_unfair_votes = safe_sub(total_unfair_votes, remove_weight).unwrap();
-        total_unfair_voters = safe_sub(total_unfair_voters, 1).unwrap();
+        // Another vote from different user
+        let another_vote = 250_000u64;
+        total_fair_votes = safe_add(total_fair_votes, another_vote).unwrap();
+        total_fair_voters = safe_add(total_fair_voters, 1).unwrap();
 
-        assert_eq!(total_unfair_votes, 2_950_000);
-        assert_eq!(total_unfair_voters, 29);
+        assert_eq!(total_fair_votes, 5_350_000);
+        assert_eq!(total_fair_voters, 52);
     }
 
     #[test]

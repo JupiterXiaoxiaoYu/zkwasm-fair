@@ -22,8 +22,8 @@ export const TOPIC_INFO = 1;
 // Event type constants
 export const EVENT_INDEXED_OBJECT = 0;
 export const EVENT_VOTE = 1;
-export const EVENT_UNSTAKE = 2;
 export const EVENT_TOPIC_CLOSED = 3;
+// EVENT_UNSTAKE (2) removed - votes are permanent
 
 // VoteType enum (matching Rust)
 export enum VoteType {
@@ -222,7 +222,7 @@ export interface VoteEvent {
     pid: bigint[];
     topicId: bigint;
     voteType: VoteType;
-    stakeAmount: bigint;
+    voteWeight: bigint;  // Changed from stakeAmount - now represents ERC20 balance
     counter: bigint;
 }
 
@@ -231,7 +231,7 @@ const voteEventSchema = new mongoose.Schema<VoteEvent>({
     pid: { type: [BigInt], required: true },
     topicId: { type: BigInt, required: true },
     voteType: { type: Number, required: true }, // 0 = Unfair, 1 = Fair
-    stakeAmount: { type: BigInt, required: true },
+    voteWeight: { type: BigInt, required: true },
     counter: { type: BigInt, required: true }
 });
 
@@ -239,52 +239,26 @@ voteEventSchema.pre('init', ObjectEvent.uint64FetchPlugin);
 voteEventSchema.index({ pid: 1 });
 voteEventSchema.index({ topicId: 1 });
 voteEventSchema.index({ counter: -1 });
+// Unique index to prevent duplicate vote events (same vote recorded multiple times)
+voteEventSchema.index({ pid: 1, topicId: 1, counter: 1 }, { unique: true });
 
-// Unstake Event Interface
-export interface UnstakeEvent {
-    pid: bigint[];
-    topicId: bigint;
-    amount: bigint;
-    counter: bigint;
-}
 
-// Unstake Event Schema
-const unstakeEventSchema = new mongoose.Schema<UnstakeEvent>({
-    pid: { type: [BigInt], required: true },
-    topicId: { type: BigInt, required: true },
-    amount: { type: BigInt, required: true },
-    counter: { type: BigInt, required: true }
-});
-
-unstakeEventSchema.pre('init', ObjectEvent.uint64FetchPlugin);
-unstakeEventSchema.index({ pid: 1 });
-unstakeEventSchema.index({ topicId: 1 });
-unstakeEventSchema.index({ counter: -1 });
-
-// Player Topic Vote Interface
+// Player Topic Vote Interface (Single vote per topic model)
 export interface PlayerTopicVote {
     pid: bigint[];
     topicId: bigint;
-    stakedAmount: bigint;
-    fairWeight: bigint;
-    unfairWeight: bigint;
-    firstVoteTime: bigint;
-    lastVoteTime: bigint;
-    lastFairVoteTime: bigint;
-    lastUnfairVoteTime: bigint;
+    voteWeight: bigint;   // ERC20 balance at vote time
+    voteType: number;     // 1 = Fair, 0 = Unfair (same as Rust VoteType enum)
+    voteTime: bigint;     // Counter when voted
 }
 
 // Player Topic Vote Schema
 const playerTopicVoteSchema = new mongoose.Schema<PlayerTopicVote>({
     pid: { type: [BigInt], required: true },
     topicId: { type: BigInt, required: true },
-    stakedAmount: { type: BigInt, default: 0n },
-    fairWeight: { type: BigInt, default: 0n },
-    unfairWeight: { type: BigInt, default: 0n },
-    firstVoteTime: { type: BigInt, default: 0n },
-    lastVoteTime: { type: BigInt, default: 0n },
-    lastFairVoteTime: { type: BigInt, default: 0n },
-    lastUnfairVoteTime: { type: BigInt, default: 0n }
+    voteWeight: { type: BigInt, default: 0n },
+    voteType: { type: Number, required: true },  // 1 = Fair, 0 = Unfair (same as Rust VoteType enum)
+    voteTime: { type: BigInt, default: 0n }
 });
 
 playerTopicVoteSchema.pre('init', ObjectEvent.uint64FetchPlugin);
@@ -293,7 +267,6 @@ playerTopicVoteSchema.index({ pid: 1, topicId: 1 }, { unique: true });
 // Main topic model using IndexedObject pattern
 export const TopicModel = mongoose.model('Topic', topicObjectSchema);
 export const VoteEventModel = mongoose.model('VoteEvent', voteEventSchema);
-export const UnstakeEventModel = mongoose.model('UnstakeEvent', unstakeEventSchema);
 export const PlayerTopicVoteModel = mongoose.model('PlayerTopicVote', playerTopicVoteSchema);
 
 // Event handling classes
@@ -305,7 +278,7 @@ export class VoteEventData {
     }
 
     static fromEvent(data: BigUint64Array): VoteEventData {
-        // Vote event format: [pid_0, pid_1, topic_id, vote_type, stake_amount, counter]
+        // Vote event format: [pid_0, pid_1, topic_id, vote_type, vote_weight, counter]
         return new VoteEventData(Array.from(data));
     }
 
@@ -320,38 +293,12 @@ export class VoteEventData {
             pid: [this.data[0], this.data[1]],
             topicId: this.data[2],
             voteType: Number(this.data[3]),
-            stakeAmount: this.data[4],
+            voteWeight: this.data[4],
             counter: this.data[5],
         };
     }
 }
 
-export class UnstakeEventData {
-    data: bigint[];
-    constructor(data: bigint[]) {
-        this.data = data;
-    }
-
-    static fromEvent(data: BigUint64Array): UnstakeEventData {
-        // Unstake event format: [pid_0, pid_1, topic_id, amount, counter]
-        return new UnstakeEventData(Array.from(data));
-    }
-
-    toObject(): UnstakeEvent {
-        // Validate data length
-        if (this.data.length < 5) {
-            console.error("UnstakeEvent data length insufficient:", this.data.length, "expected 5, data:", this.data);
-            throw new Error(`Invalid UnstakeEvent data length: ${this.data.length}, expected 5`);
-        }
-
-        return {
-            pid: [this.data[0], this.data[1]],
-            topicId: this.data[2],
-            amount: this.data[3],
-            counter: this.data[4],
-        };
-    }
-}
 
 // Global State Interface for tracking all topics
 interface GlobalState {

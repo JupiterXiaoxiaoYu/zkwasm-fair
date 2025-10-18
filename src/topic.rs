@@ -1,7 +1,7 @@
 use serde::Serialize;
 use zkwasm_rest_abi::{StorageData, MERKLE_MAP};
 use crate::error::*;
-use crate::math_safe::{safe_add, safe_sub};
+use crate::math_safe::safe_add;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TopicData {
@@ -74,49 +74,20 @@ impl TopicData {
     }
 
     /// Add vote (update weighted sum and voter count)
+    /// In the new architecture, every vote is from a new voter since users can only vote once per topic
     pub fn add_vote(
         &mut self,
         vote_type: VoteType,
         weight: u64,
-        is_new_type_voter: bool,
     ) -> Result<(), u32> {
         match vote_type {
             VoteType::Fair => {
                 self.total_fair_votes = safe_add(self.total_fair_votes, weight)?;
-                if is_new_type_voter {
-                    self.total_fair_voters = safe_add(self.total_fair_voters, 1)?;
-                }
+                self.total_fair_voters = safe_add(self.total_fair_voters, 1)?;
             },
             VoteType::Unfair => {
                 self.total_unfair_votes = safe_add(self.total_unfair_votes, weight)?;
-                if is_new_type_voter {
-                    self.total_unfair_voters = safe_add(self.total_unfair_voters, 1)?;
-                }
-            },
-        }
-
-        Ok(())
-    }
-
-    /// Remove vote (only for active Topics)
-    pub fn remove_vote(
-        &mut self,
-        vote_type: VoteType,
-        weight: u64,
-        type_cleared: bool,
-    ) -> Result<(), u32> {
-        match vote_type {
-            VoteType::Fair => {
-                self.total_fair_votes = safe_sub(self.total_fair_votes, weight)?;
-                if type_cleared {
-                    self.total_fair_voters = safe_sub(self.total_fair_voters, 1)?;
-                }
-            },
-            VoteType::Unfair => {
-                self.total_unfair_votes = safe_sub(self.total_unfair_votes, weight)?;
-                if type_cleared {
-                    self.total_unfair_voters = safe_sub(self.total_unfair_voters, 1)?;
-                }
+                self.total_unfair_voters = safe_add(self.total_unfair_voters, 1)?;
             },
         }
 
@@ -187,46 +158,58 @@ impl TopicManager {
 }
 
 // PlayerTopicVote: User's voting data for a specific Topic
+// New model: One vote per topic, weight determined by external ERC20 balance
+// Note: Ethereum address is NOT stored on-chain, only verified in TypeScript layer
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct PlayerTopicVote {
-    pub staked_amount: u64,
-    pub fair_weight: u64,
-    pub unfair_weight: u64,
-    pub first_vote_time: u64,
-    pub last_vote_time: u64,
-    pub last_fair_vote_time: u64,
-    pub last_unfair_vote_time: u64,
+    pub vote_weight: u64,           // Snapshot of external balance at vote time
+    pub vote_type: u8,              // 0 = not voted, 1 = Fair, 2 = Unfair
+    pub vote_time: u64,             // Counter when voted
 }
 
 impl PlayerTopicVote {
-    pub fn get_total_weight(&self) -> u64 {
-        self.fair_weight + self.unfair_weight
-    }
-
+    /// Check if user has already voted
     pub fn has_voted(&self) -> bool {
-        self.get_total_weight() > 0
+        self.vote_type != 0
     }
 
+    /// Check if user voted Fair
     pub fn has_fair_vote(&self) -> bool {
-        self.fair_weight > 0
+        self.vote_type == 1
     }
 
+    /// Check if user voted Unfair
     pub fn has_unfair_vote(&self) -> bool {
-        self.unfair_weight > 0
+        self.vote_type == 2
     }
 
-    /// Stake to this Topic
-    pub fn stake(&mut self, amount: u64) -> Result<(), u32> {
-        self.staked_amount = safe_add(self.staked_amount, amount)?;
-        Ok(())
-    }
-
-    /// Unstake from this Topic
-    pub fn unstake(&mut self, amount: u64) -> Result<(), u32> {
-        if self.staked_amount < amount {
-            return Err(ERROR_INSUFFICIENT_STAKE);
+    /// Get vote weight (0 if not voted)
+    pub fn get_vote_weight(&self) -> u64 {
+        if self.has_voted() {
+            self.vote_weight
+        } else {
+            0
         }
-        self.staked_amount = safe_sub(self.staked_amount, amount)?;
+    }
+
+    /// Record a vote (can only vote once)
+    pub fn record_vote(
+        &mut self,
+        vote_type: VoteType,
+        weight: u64,
+        counter: u64,
+    ) -> Result<(), u32> {
+        if self.has_voted() {
+            return Err(ERROR_ALREADY_VOTED);
+        }
+
+        self.vote_type = match vote_type {
+            VoteType::Fair => 1,    // Fair = 1
+            VoteType::Unfair => 0,  // Unfair = 0
+        };
+        self.vote_weight = weight;
+        self.vote_time = counter;
+
         Ok(())
     }
 }
@@ -234,43 +217,30 @@ impl PlayerTopicVote {
 impl StorageData for PlayerTopicVote {
     fn from_data(u64data: &mut std::slice::IterMut<u64>) -> Self {
         PlayerTopicVote {
-            staked_amount: *u64data.next().unwrap(),
-            fair_weight: *u64data.next().unwrap(),
-            unfair_weight: *u64data.next().unwrap(),
-            first_vote_time: *u64data.next().unwrap(),
-            last_vote_time: *u64data.next().unwrap(),
-            last_fair_vote_time: *u64data.next().unwrap(),
-            last_unfair_vote_time: *u64data.next().unwrap(),
+            vote_weight: *u64data.next().unwrap(),
+            vote_type: *u64data.next().unwrap() as u8,
+            vote_time: *u64data.next().unwrap(),
         }
     }
 
     fn to_data(&self, data: &mut Vec<u64>) {
-        data.push(self.staked_amount);
-        data.push(self.fair_weight);
-        data.push(self.unfair_weight);
-        data.push(self.first_vote_time);
-        data.push(self.last_vote_time);
-        data.push(self.last_fair_vote_time);
-        data.push(self.last_unfair_vote_time);
+        data.push(self.vote_weight);
+        data.push(self.vote_type as u64);
+        data.push(self.vote_time);
     }
 }
 
 // PlayerVoteManager: Manages user votes across Topics
+// Uses player_id to track votes per topic
 pub struct PlayerVoteManager;
 
 impl PlayerVoteManager {
-    const VOTE_PREFIX: [u64; 2] = [2, 0]; // Vote storage key prefix
-
-    fn combine_player_id_safe(player_id: &[u64; 2]) -> u64 {
-        let high = (player_id[0] & 0xFFFFFFFF) << 32;
-        let low = player_id[1] & 0xFFFFFFFF;
-        high | low
-    }
-
+    /// Get vote by player_id and topic_id
+    /// Storage key format: [player_id[0], player_id[1], topic_id, 0]
+    /// (Using player_id as primary key, topic_id as secondary key)
     pub fn get_vote(player_id: &[u64; 2], topic_id: u64) -> PlayerTopicVote {
         let kvpair = unsafe { &mut MERKLE_MAP };
-        let combined_player_id = Self::combine_player_id_safe(player_id);
-        let key = [Self::VOTE_PREFIX[0], Self::VOTE_PREFIX[1], combined_player_id, topic_id];
+        let key = [player_id[0], player_id[1], topic_id, 0];
         let mut data = kvpair.get(&key);
         if !data.is_empty() {
             let mut u64data = data.iter_mut();
@@ -280,12 +250,12 @@ impl PlayerVoteManager {
         }
     }
 
+    /// Store vote by player_id and topic_id
     pub fn store_vote(player_id: &[u64; 2], topic_id: u64, vote: &PlayerTopicVote) {
         let mut data = vec![];
         vote.to_data(&mut data);
         let kvpair = unsafe { &mut MERKLE_MAP };
-        let combined_player_id = Self::combine_player_id_safe(player_id);
-        let key = [Self::VOTE_PREFIX[0], Self::VOTE_PREFIX[1], combined_player_id, topic_id];
+        let key = [player_id[0], player_id[1], topic_id, 0];
         kvpair.set(&key, data.as_slice());
     }
 }

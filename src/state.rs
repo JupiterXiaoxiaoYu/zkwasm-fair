@@ -121,13 +121,10 @@ lazy_static::lazy_static! {
 // Transaction constants
 const TICK: u64 = 0;
 const INSTALL_PLAYER: u64 = 1;
-const WITHDRAW: u64 = 2;
-const DEPOSIT: u64 = 3;
 const ADD_MANAGER: u64 = 4;
 const REMOVE_MANAGER: u64 = 5;
 const CREATE_TOPIC: u64 = 6;
 const VOTE: u64 = 7;
-const UNSTAKE: u64 = 8;
 const CLOSE_TOPIC: u64 = 9;
 
 pub struct Transaction {
@@ -141,25 +138,14 @@ impl Transaction {
     }
 
     pub fn decode(params: &[u64]) -> Self {
-        use crate::command::{Command, Activity, Withdraw, Deposit};
+        use crate::command::{Command, Activity};
         use crate::topic::VoteType;
         use zkwasm_rest_abi::enforce;
 
         let command = params[0] & 0xff;
         let nonce = params[0] >> 16;
 
-        let command = if command == WITHDRAW {
-            enforce(params.len() == 5, "withdraw needs 5 params");
-            Command::Withdraw(Withdraw {
-                data: [params[2], params[3], params[4]]
-            })
-        } else if command == DEPOSIT {
-            enforce(params.len() == 5, "deposit needs 5 params");
-            enforce(params[3] == 0, "check deposit index");
-            Command::Deposit(Deposit {
-                data: [params[1], params[2], params[4]]
-            })
-        } else if command == ADD_MANAGER {
+        let command = if command == ADD_MANAGER {
             enforce(params.len() == 3, "add_manager needs 3 params");
             Command::Activity(Activity::AddManager([params[1], params[2]]))
         } else if command == REMOVE_MANAGER {
@@ -169,12 +155,15 @@ impl Transaction {
             enforce(params.len() == 2, "create_topic needs 2 params");
             Command::Activity(Activity::CreateTopic(params[1]))
         } else if command == VOTE {
-            enforce(params.len() == 4, "vote needs 4 params");
-            let vote_type = if params[2] == 1 { VoteType::Fair } else { VoteType::Unfair };
-            Command::Activity(Activity::Vote(params[1], vote_type, params[3]))
-        } else if command == UNSTAKE {
-            enforce(params.len() == 3, "unstake needs 3 params");
-            Command::Activity(Activity::Unstake(params[1], params[2]))
+            // Format: [cmd, player_id[0], player_id[1], topic_id, vote_type, vote_weight]
+            enforce(params.len() == 6, "vote needs 6 params: [cmd, player_id[0], player_id[1], topic_id, vote_type, vote_weight]");
+            let vote_type = if params[4] == 1 { VoteType::Fair } else { VoteType::Unfair };
+            Command::Activity(Activity::Vote {
+                player_id: [params[1], params[2]],
+                topic_id: params[3],
+                vote_type,
+                vote_weight: params[5],
+            })
         } else if command == CLOSE_TOPIC {
             enforce(params.len() == 2, "close_topic needs 2 params");
             Command::Activity(Activity::CloseTopic(params[1]))
@@ -191,15 +180,14 @@ impl Transaction {
     pub fn create_player(&self, pkey: &[u64; 4]) -> Result<(), u32> {
         use crate::player::Player;
         use crate::error::{ERROR_PLAYER_ALREADY_EXISTS};
-        use crate::config::NEW_PLAYER_INITIAL_BALANCE;
 
         let player_id = Player::pkey_to_pid(pkey);
         let player = Player::get_from_pid(&player_id);
         match player {
             Some(_) => Err(ERROR_PLAYER_ALREADY_EXISTS),
             None => {
-                let mut player = Player::new_from_pid(player_id);
-                player.data.balance = NEW_PLAYER_INITIAL_BALANCE;
+                let player = Player::new_from_pid(player_id);
+                // No initial balance - balance management removed
                 player.store();
                 Ok(())
             }
@@ -245,22 +233,18 @@ impl Transaction {
             },
             crate::command::Command::InstallPlayer => self.create_player(pkey)
                 .map_or_else(|e| e, |_| 0),
-            crate::command::Command::Withdraw(cmd) => cmd.handle(&pid, self.nonce, rand, counter)
-                .map_or_else(|e| e, |_| 0),
             crate::command::Command::Activity(cmd) => {
                 // Check admin permissions for admin-only commands
-                if let crate::command::Activity::AddManager(_) = cmd {
-                    unsafe { require(*pkey == *ADMIN_PUBKEY) };
-                }
-                if let crate::command::Activity::RemoveManager(_) = cmd {
-                    unsafe { require(*pkey == *ADMIN_PUBKEY) };
+                match cmd {
+                    crate::command::Activity::AddManager(_) |
+                    crate::command::Activity::RemoveManager(_) |
+                    crate::command::Activity::Vote { .. } => {
+                        // These require admin (admin submits vote after signature verification)
+                        unsafe { require(*pkey == *ADMIN_PUBKEY) };
+                    },
+                    _ => {}
                 }
                 // Note: CloseTopic is checked in handle_close_topic (Manager permission)
-                cmd.handle(&pid, self.nonce, rand, counter)
-                    .map_or_else(|e| e, |_| 0)
-            },
-            crate::command::Command::Deposit(cmd) => {
-                unsafe { require(*pkey == *ADMIN_PUBKEY) };
                 cmd.handle(&pid, self.nonce, rand, counter)
                     .map_or_else(|e| e, |_| 0)
             },

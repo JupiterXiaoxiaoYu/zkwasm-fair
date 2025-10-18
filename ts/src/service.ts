@@ -5,80 +5,139 @@ import { merkleRootToBeHexString } from "zkwasm-ts-server/src/lib.js";
 import {
     TopicModel,
     VoteEventModel,
-    UnstakeEventModel,
     PlayerTopicVoteModel,
     docToJSON,
     IndexedObject,
     VoteEventData,
-    UnstakeEventData,
     EVENT_INDEXED_OBJECT,
     EVENT_VOTE,
-    EVENT_UNSTAKE,
     EVENT_TOPIC_CLOSED
 } from "./models.js";
+import { verifyVoteSignature } from "./signature.js";
+import { getVoteWeight, defaultERC20Config } from "./balance_query.js";
+import { createCommand } from "zkwasm-minirollup-rpc";
+import { get_server_admin_key } from "zkwasm-ts-server/src/config.js";
 
 const service = new Service(eventCallback, batchedCallback, extra);
 await service.initialize();
 
 let txStateManager = new TxStateManager(merkleRootToBeHexString(service.merkleRoot));
 
-const VOTE_COMMAND = 1n;
-
-// Front end
-/*
-public async sendVote(address, signature, topicid): Promise<any> {
-    try {
-      let resp:any = await XXX call vote
-      for (let i=0; i<5; i++) {//detect job status with 1 sec delay
-        await delay(1000);
-        let jobStatus;
-        try {
-            jobStatus = await this.queryJobStatus(resp.jobid);
-            if(jobStatus.finishedOn == undefined) {
-              throw Error("WaitingForProcess");
-            }
-        } catch(e) {
-          continue
-        }
-        if (jobStatus) {
-          if (jobStatus.finishedOn != undefined && jobStatus.failedReason == undefined ) {
-            return jobStatus.returnvalue;
-          } else {
-            throw Error(jobStatus.failedReason)
-          }
-        }
-      }
-      throw Error("MonitorTransactionFail");
-    } catch(e) {
-      //console.log(e);
-      throw e;
-    }
-  }
-*/
-
+const VOTE_COMMAND = 7;  // Vote command ID
 
 function extra(app: Express) {
+    /**
+     * POST /vote - Submit a vote with Ethereum signature verification
+     * Request body:
+     * {
+     *   player_id: [u64, u64],     // zkWasm player_id
+     *   topic_id: string,           // Topic ID
+     *   vote_type: "Fair" | "Unfair",
+     *   signature: string,          // Ethereum signature
+     *   timestamp: number           // Unix timestamp when signed
+     * }
+     */
     app.post('/vote', async (req, res) => {
-      const value = req.body;
-      // let signature = XXX
-      // let addr = XXX
-      let topicId = BigInt(value.topicId);
-      // verifyErcSignature(topic, addr, signature);
-      let fair = BigInt(value.fair);
+        const { player_id, topic_id, vote_type, signature, timestamp } = req.body;
 
-      try {
-        let balance = verify_and_get_balance();
-        let signatureValue = sign(createCommand(0n, VOTE_COMMAND, [topicId, fair]), get_server_admin_key());
-        const job = await service.queue!.add('transaction', { value });
-        res.status(201).send({
-            success: true,
-            jobid: job.id
-        });
+        try {
+            // Validate input
+            if (!player_id || !Array.isArray(player_id) || player_id.length !== 2) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Invalid player_id format. Expected [u64, u64]'
+                });
+            }
+
+            if (!topic_id) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Missing topic_id'
+                });
+            }
+
+            if (vote_type !== 'Fair' && vote_type !== 'Unfair') {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Invalid vote_type. Expected "Fair" or "Unfair"'
+                });
+            }
+
+            if (!signature) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Missing signature'
+                });
+            }
+
+            if (!timestamp || typeof timestamp !== 'number') {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Invalid timestamp'
+                });
+            }
+
+            const topicId = BigInt(topic_id);
+            const voteTypeNum = vote_type === 'Fair' ? 1 : 0;
+
+            // 1. Verify Ethereum signature and recover address
+            const ethAddress = verifyVoteSignature(topicId, voteTypeNum, timestamp, signature);
+            console.log(`Vote request from Ethereum address: ${ethAddress}`);
+
+            // 2. Query ERC20 balance for vote weight
+            const voteWeight = await getVoteWeight(
+                defaultERC20Config.rpcUrl,
+                defaultERC20Config.tokenAddress,
+                ethAddress,
+                defaultERC20Config.decimals
+            );
+
+            console.log(`Vote weight for ${ethAddress}: ${voteWeight}`);
+
+            if (voteWeight === 0n) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Insufficient ERC20 balance to vote'
+                });
+            }
+
+            // 3. Admin submits vote command on behalf of user
+            // Note: Deduplication is enforced by Rust layer (PlayerVoteManager)
+            const adminKey = get_server_admin_key();
+            const cmd = createCommand(
+                0n,  // Admin nonce will be handled by zkWasm
+                BigInt(VOTE_COMMAND),
+                [
+                    BigInt(player_id[0]),
+                    BigInt(player_id[1]),
+                    topicId,
+                    BigInt(voteTypeNum),
+                    voteWeight
+                ]
+            );
+
+            // 4. Add transaction to queue
+            // Note: Deduplication is enforced ONLY by Rust layer (PlayerVoteManager)
+            // If vote fails (e.g., already voted), the transaction will fail with ERROR_ALREADY_VOTED
+            const job = await service.queue!.add('transaction', {
+                command: Array.from(cmd),
+                processingKey: adminKey
+            });
+
+            res.status(201).send({
+                success: true,
+                jobid: job.id,
+                eth_address: ethAddress,
+                vote_weight: voteWeight.toString()
+            });
+
+        } catch (error: any) {
+            console.error('Error processing vote:', error);
+            res.status(500).send({
+                success: false,
+                error: error.message || 'Failed to process vote'
+            });
         }
-      } catch (error) {
-        console.error('Error adding job to the queue:', error);
-        res.status(500).send('Failed to add job to the queue');
-      }
     });
 
     // Get all topics
@@ -166,33 +225,6 @@ function extra(app: Express) {
         }
     });
 
-    // Get recent unstake events for specific topic
-    app.get("/data/topic/:topicId/unstakes", async (req: any, res) => {
-        try {
-            const topicId = req.params.topicId;
-
-            const doc = await UnstakeEventModel.find({ topicId: topicId })
-                .sort({ counter: -1 })
-                .limit(100);
-
-            let data = doc.map((d: mongoose.Document) => {
-                const unstake = docToJSON(d);
-                unstake.transactionType = 'UNSTAKE';
-                return unstake;
-            });
-
-            res.status(200).send({
-                success: true,
-                data: data,
-            });
-        } catch (e) {
-            console.error("Error fetching topic unstakes:", e);
-            res.status(500).send({
-                success: false,
-                error: "Failed to fetch topic unstakes"
-            });
-        }
-    });
 
     // Get player's recent vote events across all topics
     app.get("/data/player/:pid1/:pid2/votes", async (req: any, res) => {
@@ -238,19 +270,15 @@ function extra(app: Express) {
             });
 
             if (!doc) {
-                // Return default empty vote state
+                // Return default empty vote state (new architecture: single vote per topic)
                 res.status(200).send({
                     success: true,
                     data: {
                         pid: [pid1, pid2],
                         topicId: topicId,
-                        stakedAmount: "0",
-                        fairWeight: "0",
-                        unfairWeight: "0",
-                        firstVoteTime: "0",
-                        lastVoteTime: "0",
-                        lastFairVoteTime: "0",
-                        lastUnfairVoteTime: "0"
+                        voteWeight: "0",  // ERC20 balance at vote time
+                        voteType: null,   // null = not voted, 1 = Fair, 0 = Unfair
+                        voteTime: "0"     // Counter when voted
                     }
                 });
                 return;
@@ -299,36 +327,24 @@ function extra(app: Express) {
     // Get topic statistics
     app.get("/data/topic/:topicId/stats", async (req: any, res) => {
         try {
-            const topicId = req.params.topicId;
+            const topicId = BigInt(req.params.topicId);
 
             // Get vote count
             const voteCount = await VoteEventModel.countDocuments({ topicId: topicId });
 
-            // Get unstake count
-            const unstakeCount = await UnstakeEventModel.countDocuments({ topicId: topicId });
-
-            // Get unique voters
-            const uniqueVotersResult = await VoteEventModel.aggregate([
-                { $match: { topicId: topicId } },
-                {
-                    $group: {
-                        _id: null,
-                        uniqueVoters: { $addToSet: "$pid" }
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        uniqueVoters: { $size: "$uniqueVoters" }
-                    }
-                }
-            ]);
-
-            const uniqueVoters = uniqueVotersResult.length > 0 ? uniqueVotersResult[0].uniqueVoters : 0;
+            // Get unique voters by fetching votes and counting unique PIDs
+            // Note: Using aggregate with $match on BigInt fields has issues in MongoDB
+            const votes = await VoteEventModel.find({ topicId: topicId }).select('pid');
+            const uniquePids = new Set<string>();
+            votes.forEach((vote: any) => {
+                // Create a unique key from the pid array
+                const pidKey = `${vote.pid[0]}-${vote.pid[1]}`;
+                uniquePids.add(pidKey);
+            });
+            const uniqueVoters = uniquePids.size;
 
             const stats = {
                 voteCount,
-                unstakeCount,
                 uniqueVoters
             };
 
@@ -414,17 +430,17 @@ async function eventCallback(arg: TxWitness, data: BigUint64Array) {
     }
 
     let event = new Event(data[1], data);
-    let doc = new EventModel({
-        id: event.id.toString(),
-        data: Buffer.from(event.data.buffer)
-    });
 
+    // Use updateOne with upsert to prevent duplicate event storage on service restart
     try {
-        let result = await doc.save();
-        if (!result) {
-            console.error("Failed to save event");
-            throw new Error("save event to db failed");
-        }
+        await EventModel.updateOne(
+            { id: event.id.toString() },
+            {
+                id: event.id.toString(),
+                data: Buffer.from(event.data.buffer)
+            },
+            { upsert: true }
+        );
     } catch (e) {
         console.error("Event save error:", e);
     }
@@ -457,9 +473,6 @@ async function eventCallback(arg: TxWitness, data: BigUint64Array) {
             case EVENT_VOTE:
                 await handleVoteEvent(arg, eventData);
                 break;
-            case EVENT_UNSTAKE:
-                await handleUnstakeEvent(arg, eventData);
-                break;
             case EVENT_TOPIC_CLOSED:
                 await handleTopicClosedEvent(arg, eventData);
                 break;
@@ -480,48 +493,36 @@ async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
         const voteEvent = VoteEventData.fromEvent(data);
         const voteObj = voteEvent.toObject();
 
-        console.log(`Vote Event: Player [${voteObj.pid[0]}, ${voteObj.pid[1]}] voted ${voteObj.voteType} with ${voteObj.stakeAmount} on topic ${voteObj.topicId}`);
+        console.log(`Vote Event: Player [${voteObj.pid[0]}, ${voteObj.pid[1]}] voted ${voteObj.voteType === 1 ? 'Fair' : 'Unfair'} with weight ${voteObj.voteWeight} on topic ${voteObj.topicId}`);
 
-        // Store vote event in database
-        await VoteEventModel.create(voteObj);
-
-        // Update or create player topic vote record
-        const existingVote = await PlayerTopicVoteModel.findOne({
-            pid: voteObj.pid,
-            topicId: voteObj.topicId
-        });
-
-        if (existingVote) {
-            // Update existing vote
-            if (voteObj.voteType === 1) { // Fair
-                existingVote.fairWeight = (BigInt(existingVote.fairWeight) + BigInt(voteObj.stakeAmount)).toString() as any;
-                if (BigInt(existingVote.lastFairVoteTime) === 0n) {
-                    existingVote.lastFairVoteTime = voteObj.counter.toString() as any;
-                }
-            } else { // Unfair
-                existingVote.unfairWeight = (BigInt(existingVote.unfairWeight) + BigInt(voteObj.stakeAmount)).toString() as any;
-                if (BigInt(existingVote.lastUnfairVoteTime) === 0n) {
-                    existingVote.lastUnfairVoteTime = voteObj.counter.toString() as any;
-                }
-            }
-            existingVote.stakedAmount = (BigInt(existingVote.stakedAmount) + BigInt(voteObj.stakeAmount)).toString() as any;
-            existingVote.lastVoteTime = voteObj.counter.toString() as any;
-            await existingVote.save();
-        } else {
-            // Create new vote record
-            const newVote: any = {
+        // Store vote event in database (use updateOne with upsert to prevent duplicates on service restart)
+        await VoteEventModel.updateOne(
+            {
                 pid: voteObj.pid,
                 topicId: voteObj.topicId,
-                stakedAmount: voteObj.stakeAmount.toString(),
-                fairWeight: voteObj.voteType === 1 ? voteObj.stakeAmount.toString() : "0",
-                unfairWeight: voteObj.voteType === 0 ? voteObj.stakeAmount.toString() : "0",
-                firstVoteTime: voteObj.counter.toString(),
-                lastVoteTime: voteObj.counter.toString(),
-                lastFairVoteTime: voteObj.voteType === 1 ? voteObj.counter.toString() : "0",
-                lastUnfairVoteTime: voteObj.voteType === 0 ? voteObj.counter.toString() : "0"
-            };
-            await PlayerTopicVoteModel.create(newVote);
-        }
+                counter: voteObj.counter
+            },
+            voteObj,
+            { upsert: true }
+        );
+
+        // Create or update player topic vote record (single vote per topic)
+        const newVote = {
+            pid: voteObj.pid,
+            topicId: voteObj.topicId,
+            voteWeight: voteObj.voteWeight,
+            voteType: voteObj.voteType,  // 1 = Fair, 0 = Unfair (same as Rust enum)
+            voteTime: voteObj.counter
+        };
+
+        await PlayerTopicVoteModel.findOneAndUpdate(
+            {
+                pid: voteObj.pid,
+                topicId: voteObj.topicId
+            },
+            newVote,
+            { upsert: true }
+        );
 
         console.log(`Vote record saved to database for topic ${voteObj.topicId}`);
 
@@ -531,38 +532,7 @@ async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
     }
 }
 
-async function handleUnstakeEvent(arg: TxWitness, data: BigUint64Array) {
-    try {
-        console.log(`Unstake Event received with data length: ${data.length}`);
-        console.log("Full unstake event data:", Array.from(data));
-
-        // Parse unstake event using UnstakeEventData class
-        const unstakeEvent = UnstakeEventData.fromEvent(data);
-        const unstakeObj = unstakeEvent.toObject();
-
-        console.log(`Unstake Event: Player [${unstakeObj.pid[0]}, ${unstakeObj.pid[1]}] unstaked ${unstakeObj.amount} from topic ${unstakeObj.topicId}`);
-
-        // Store unstake event in database
-        await UnstakeEventModel.create(unstakeObj);
-
-        // Update player topic vote record
-        const existingVote = await PlayerTopicVoteModel.findOne({
-            pid: unstakeObj.pid,
-            topicId: unstakeObj.topicId
-        });
-
-        if (existingVote) {
-            existingVote.stakedAmount = (BigInt(existingVote.stakedAmount) - BigInt(unstakeObj.amount)).toString() as any;
-            await existingVote.save();
-        }
-
-        console.log(`Unstake record saved to database for topic ${unstakeObj.topicId}`);
-
-    } catch (error) {
-        console.error("Error handling unstake event:", error);
-        console.error("Error details:", error);
-    }
-}
+// Unstake event handler removed - votes are permanent in new model
 
 async function handleTopicClosedEvent(arg: TxWitness, data: BigUint64Array) {
     try {

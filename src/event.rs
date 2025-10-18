@@ -22,8 +22,8 @@ pub fn insert_event(typ: u64, data: &mut Vec<u64>) {
 // Event type constants for voting application
 pub const EVENT_INDEXED_OBJECT: u64 = 0;
 pub const EVENT_VOTE: u64 = 1;
-pub const EVENT_UNSTAKE: u64 = 2;
 pub const EVENT_TOPIC_CLOSED: u64 = 3;
+// EVENT_UNSTAKE (2) removed - votes are permanent
 
 // Object info constants for IndexedObject
 pub const TOPIC_INFO: u64 = 1;
@@ -37,12 +37,12 @@ pub fn emit_topic_indexed_object(topic: &TopicData, topic_id: u64) {
     insert_event(EVENT_INDEXED_OBJECT, &mut data);
 }
 
-// Helper function to emit vote events
+// Helper function to emit vote events (using player_id)
 pub fn emit_vote_event(
-    player_id: [u64; 2],
+    player_id: &[u64; 2],
     topic_id: u64,
     vote_type: VoteType,
-    stake_amount: u64,
+    vote_weight: u64,
     counter: u64,
 ) {
     let mut data = vec![
@@ -50,28 +50,13 @@ pub fn emit_vote_event(
         player_id[1],
         topic_id,
         vote_type as u64,
-        stake_amount,
+        vote_weight,
         counter,
     ];
     insert_event(EVENT_VOTE, &mut data);
 }
 
-// Helper function to emit unstake events
-pub fn emit_unstake_event(
-    player_id: [u64; 2],
-    topic_id: u64,
-    amount: u64,
-    counter: u64,
-) {
-    let mut data = vec![
-        player_id[0],
-        player_id[1],
-        topic_id,
-        amount,
-        counter,
-    ];
-    insert_event(EVENT_UNSTAKE, &mut data);
-}
+// emit_unstake_event removed - no unstaking in new model
 
 // Helper function to emit topic closed events (manual or automatic)
 pub fn emit_topic_closed_event(

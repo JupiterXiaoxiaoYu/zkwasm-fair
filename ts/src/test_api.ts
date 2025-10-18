@@ -122,7 +122,7 @@ async function testGetTopicVotes(topicId: string) {
                 console.log(`    PID: [${vote.pid[0]}, ${vote.pid[1]}]`);
                 console.log(`    Topic ID: ${vote.topicId}`);
                 console.log(`    Vote Type: ${vote.voteType === 1 ? 'Fair' : 'Unfair'}`);
-                console.log(`    Stake Amount: ${vote.stakeAmount}`);
+                console.log(`    Vote Weight: ${vote.voteWeight}`);
                 console.log(`    Counter: ${vote.counter}`);
                 console.log(`    Transaction Type: ${vote.transactionType}`);
             });
@@ -135,34 +135,7 @@ async function testGetTopicVotes(topicId: string) {
     }
 }
 
-// Test 4: Get topic unstakes
-async function testGetTopicUnstakes(topicId: string) {
-    console.log("\n" + "=".repeat(60));
-    console.log(`TEST 4: GET /data/topic/${topicId}/unstakes - Get recent unstakes`);
-    console.log("=".repeat(60));
-
-    try {
-        const result = await apiCall(`/data/topic/${topicId}/unstakes`);
-        console.log(`✅ Success! Found ${result.data.length} unstake events`);
-
-        if (result.data.length > 0) {
-            console.log("\nFirst 3 unstakes:");
-            result.data.slice(0, 3).forEach((unstake: any, index: number) => {
-                console.log(`\n  Unstake ${index + 1}:`);
-                console.log(`    PID: [${unstake.pid[0]}, ${unstake.pid[1]}]`);
-                console.log(`    Topic ID: ${unstake.topicId}`);
-                console.log(`    Amount: ${unstake.amount}`);
-                console.log(`    Counter: ${unstake.counter}`);
-                console.log(`    Transaction Type: ${unstake.transactionType}`);
-            });
-        }
-
-        return result;
-    } catch (error) {
-        console.error("❌ Test failed:", error);
-        return null;
-    }
-}
+// Test 4: Removed - unstake feature no longer exists
 
 // Test 5: Get player votes
 async function testGetPlayerVotes(pid1: string, pid2: string) {
@@ -180,7 +153,7 @@ async function testGetPlayerVotes(pid1: string, pid2: string) {
                 console.log(`\n  Vote ${index + 1}:`);
                 console.log(`    Topic ID: ${vote.topicId}`);
                 console.log(`    Vote Type: ${vote.voteType === 1 ? 'Fair' : 'Unfair'}`);
-                console.log(`    Stake Amount: ${vote.stakeAmount}`);
+                console.log(`    Vote Weight: ${vote.voteWeight}`);
                 console.log(`    Counter: ${vote.counter}`);
             });
         }
@@ -200,22 +173,18 @@ async function testGetPlayerTopicVote(pid1: string, pid2: string, topicId: strin
 
     try {
         const result = await apiCall(`/data/player/${pid1}/${pid2}/topic/${topicId}`);
-        console.log(`✅ Success! Player's position on Topic ${topicId}:`);
-        console.log(`  Staked Amount: ${result.data.stakedAmount}`);
-        console.log(`  Fair Weight: ${result.data.fairWeight}`);
-        console.log(`  Unfair Weight: ${result.data.unfairWeight}`);
-        console.log(`  First Vote Time: ${result.data.firstVoteTime}`);
-        console.log(`  Last Vote Time: ${result.data.lastVoteTime}`);
-        console.log(`  Last Fair Vote Time: ${result.data.lastFairVoteTime}`);
-        console.log(`  Last Unfair Vote Time: ${result.data.lastUnfairVoteTime}`);
+        console.log(`✅ Success! Player's vote on Topic ${topicId}:`);
+        console.log(`  Vote Weight: ${result.data.voteWeight}`);
+        console.log(`  Vote Type: ${result.data.voteType === 0 ? 'Not voted' : (result.data.voteType === 1 ? 'Fair' : 'Unfair')}`);
+        console.log(`  Vote Time: ${result.data.voteTime}`);
 
-        // Determine vote type
-        if (BigInt(result.data.fairWeight) > 0n) {
+        // Determine vote status
+        if (result.data.voteType === 0) {
+            console.log(`  → This player has NOT voted on this topic`);
+        } else if (result.data.voteType === 1) {
             console.log(`  → This player voted FAIR on this topic`);
-        } else if (BigInt(result.data.unfairWeight) > 0n) {
+        } else if (result.data.voteType === 2) {
             console.log(`  → This player voted UNFAIR on this topic`);
-        } else {
-            console.log(`  → This player has not voted on this topic`);
         }
 
         return result;
@@ -239,15 +208,9 @@ async function testGetPlayerTopics(pid1: string, pid2: string) {
             console.log("\nPlayer's positions:");
             result.data.forEach((position: any) => {
                 console.log(`\n  Topic ${position.topicId}:`);
-                console.log(`    Staked Amount: ${position.stakedAmount}`);
-                console.log(`    Fair Weight: ${position.fairWeight}`);
-                console.log(`    Unfair Weight: ${position.unfairWeight}`);
-
-                if (BigInt(position.fairWeight) > 0n) {
-                    console.log(`    → Voted FAIR`);
-                } else if (BigInt(position.unfairWeight) > 0n) {
-                    console.log(`    → Voted UNFAIR`);
-                }
+                console.log(`    Vote Weight: ${position.voteWeight}`);
+                console.log(`    Vote Type: ${position.voteType === 0 ? 'Not voted' : (position.voteType === 1 ? 'Fair' : 'Unfair')}`);
+                console.log(`    Vote Time: ${position.voteTime}`);
             });
         }
 
@@ -268,10 +231,7 @@ async function testGetTopicStats(topicId: string) {
         const result = await apiCall(`/data/topic/${topicId}/stats`);
         console.log(`✅ Success! Topic ${topicId} statistics:`);
         console.log(`  Vote Count: ${result.data.voteCount}`);
-        console.log(`  Unstake Count: ${result.data.unstakeCount}`);
         console.log(`  Unique Voters: ${result.data.uniqueVoters}`);
-        console.log(`  Total Vote Weight: ${result.data.totalVoteWeight}`);
-        console.log(`  Total Unstake Amount: ${result.data.totalUnstakeAmount}`);
 
         return result;
     } catch (error) {
@@ -291,7 +251,6 @@ async function testGetPlatformStats() {
         console.log(`✅ Success! Platform statistics:`);
         console.log(`  Total Topics: ${result.data.totalTopics}`);
         console.log(`  Total Votes: ${result.data.totalVotes}`);
-        console.log(`  Total Unstakes: ${result.data.totalUnstakes}`);
         console.log(`  Unique Voters: ${result.data.uniqueVoters}`);
 
         return result;
@@ -349,18 +308,6 @@ async function runAllTests() {
         } else {
             results.failed++;
             results.tests.push(`❌ GET /data/topic/${topicId}/votes`);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Test 4: Get topic unstakes
-        const topicUnstakes = await testGetTopicUnstakes(topicId);
-        if (topicUnstakes) {
-            results.passed++;
-            results.tests.push(`✅ GET /data/topic/${topicId}/unstakes`);
-        } else {
-            results.failed++;
-            results.tests.push(`❌ GET /data/topic/${topicId}/unstakes`);
         }
 
         await new Promise(resolve => setTimeout(resolve, 500));

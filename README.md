@@ -1,31 +1,36 @@
 # zkfair - Fair/Unfair Voting System
 
-A zkWasm-based voting platform where users can vote on topics with weighted voting using staked tokens. The system allows users to vote "Fair" or "Unfair" on various topics, stake tokens to increase their vote weight, and unstake when desired.
+A zkWasm-based decentralized voting platform where users vote on topics using **Ethereum wallet signatures** and **ERC20 token balance** as vote weight. The system enables permanent, weighted voting on topics with "Fair" or "Unfair" choices.
 
 ## 🚀 Features
 
 ### Core Voting Functions
-- **Multi-Topic Support**: Create and manage multiple voting topics simultaneously
-- **Weighted Voting**: Vote weight based on staked token amount
+- **Ethereum Signature-Based Voting**: Users sign votes with MetaMask (or compatible wallets)
+- **ERC20 Balance as Vote Weight**: Vote weight determined by real-time ERC20 token balance
+- **No Internal Balance System**: No deposits/withdrawals required - uses external ERC20 balance
+- **Single Permanent Vote**: Each user can vote once per topic (Fair OR Unfair) - votes are permanent
 - **Dual Vote Types**: Vote "Fair" (1) or "Unfair" (0) on each topic
-- **Flexible Staking**: Stake tokens to vote, unstake anytime to retrieve tokens
-- **Single Vote Type**: Each user can only vote one type (Fair OR Unfair) per topic
+- **Multi-Topic Support**: Create and manage multiple voting topics simultaneously
 - **Topic Lifecycle**: Topics have start time, end time, and can be manually closed
 - **Manager System**: Role-based permissions for topic creation and management
 
 ### Advanced Features
-- **IndexedObject Pattern**: Efficient data storage and event system for real-time updates
+- **External Balance Oracle**: Backend queries ERC20 balance from BSC (or other EVM chains)
+- **Admin Proxy Pattern**: Backend verifies signatures and submits votes on behalf of users
 - **Vote Tracking**: Track total votes, voter counts, and individual voting history
-- **Simple Unstaking**: Unstake removes vote weights from your chosen vote type
 - **Time-Based Validation**: Topics can only be voted on within their active time window
-- **Complete History**: Transaction logs for all vote and unstake operations
+- **Complete History**: Transaction logs for all vote operations
 - **Statistics API**: Real-time topic statistics and platform-wide metrics
+- **IndexedObject Pattern**: Efficient data storage and event system for real-time updates
 
 ### Security & Safety
+- **Signature Verification**: ECDSA signature recovery prevents vote spoofing
+- **Sybil Resistance**: ERC20 balance requirement prevents fake account attacks
+- **Deduplication**: Rust layer enforces one-vote-per-topic rule
 - **Mathematical Safety**: Comprehensive overflow/underflow protection
 - **Safe Arithmetic**: All operations use checked math (safe_add, safe_sub, safe_mul, safe_div)
-- **Input Validation**: Strict validation of all parameters and amounts
-- **Permission Checks**: Admin-only operations for sensitive commands
+- **Input Validation**: Strict validation of all parameters
+- **Permission Checks**: Admin/Manager-only operations for sensitive commands
 - **Atomic Operations**: All state changes are atomic and consistent
 
 ## 🏗️ Technical Architecture
@@ -34,73 +39,119 @@ A zkWasm-based voting platform where users can vote on topics with weighted voti
 ```
 ├── lib.rs                 # Application entry point and zkWasm API
 ├── config.rs              # Configuration constants and time conversion helpers
-├── error.rs               # Error code definitions (30+ error types)
-├── event.rs               # Event emission system (IndexedObject, Vote, Unstake)
-├── command.rs             # Transaction command handlers (Vote, Unstake, etc.)
-├── player.rs              # Player data structures and balance operations
-├── topic.rs               # Topic logic, vote tracking, and storage
+├── error.rs               # Error code definitions (20+ error types)
+├── event.rs               # Event emission system (IndexedObject, Vote, TopicClosed)
+├── command.rs             # Transaction command handlers (Vote, CreateTopic, etc.)
+├── player.rs              # Player vote manager and deduplication logic
+├── topic.rs               # Topic logic, vote tracking, and VoteType enum
 ├── manager.rs             # Manager registry for role-based permissions
 ├── math_safe.rs           # Safe mathematical operations
-├── settlement.rs          # Withdrawal settlement system
 ├── state.rs               # Global state and transaction processing
-└── security_tests.rs      # Comprehensive security test suite (10+ tests)
+└── security_tests.rs      # Comprehensive security test suite
 ```
 
 ### TypeScript Service (`ts/src/`)
 ```
-├── service.ts             # Main service with 9 REST API endpoints
+├── service.ts             # Main service with REST API endpoints + /vote
 ├── models.ts              # Data models and MongoDB schemas
+├── signature.ts           # Ethereum signature verification (ethers.js v6)
+├── balance_query.ts       # ERC20 balance oracle (queries BSC/ETH)
 ├── api.ts                 # Client API and transaction builders
 ├── test.ts                # Comprehensive integration test suite
-└── deposit.ts             # Admin deposit utility script
+└── test_api.ts            # API endpoint test suite
 ```
 
 ## 🗳️ Voting System Logic
 
-### Vote Weight Calculation
-- **Weighted Votes**: Each token staked = 1 vote weight
-- **Vote Accumulation**: Users can vote multiple times on same type, weights accumulate
-- **Single Vote Type**: Users can only vote ONE type (Fair OR Unfair) per topic
-- **Simple Unstaking**: When unstaking, vote weights are removed from your vote type
-
-### Example Scenario
+### Vote Type Values
 ```typescript
-// User votes on Topic 1 with Fair
-await player.vote(1n, VoteType.Fair, 10000n);      // Stake 10,000 tokens for Fair
-await player.vote(1n, VoteType.Fair, 5000n);       // Stake another 5,000 for Fair
-
-// User's position: Fair=15,000, Unfair=0, Total Staked=15,000
-// Topic statistics: +15,000 Fair votes, +1 Fair voter
-
-// Try to vote Unfair (WILL FAIL - ERROR_CANNOT_VOTE_BOTH_TYPES)
-await player.vote(1n, VoteType.Unfair, 1000n);     // ❌ Error: Cannot vote both types
-
-// Unstake 9,000 tokens
-await player.unstake(1n, 9000n);
-
-// New position: Fair=6,000, Unfair=0, Total Staked=6,000
-// Topic statistics: -9,000 Fair votes (voter count unchanged)
-
-// After unstaking ALL tokens, user can vote the opposite type
-await player.unstake(1n, 6000n);                    // Unstake remaining 6,000
-// Now user can vote Unfair if desired
-await player.vote(1n, VoteType.Unfair, 8000n);     // ✅ Now allowed
+VoteType::Fair = 1     // Fair vote
+VoteType::Unfair = 0   // Unfair vote
+voteType = null        // Not voted (API response only)
 ```
 
+### Vote Weight Source
+- **External ERC20 Balance**: Backend queries user's ERC20 token balance from BSC (or other EVM chain)
+- **Real-Time Query**: Balance checked at vote submission time
+- **Permanent Weight**: Vote weight frozen at voting time (balance changes after voting don't affect vote)
+- **Cross-Topic**: Same balance can be used to vote on multiple topics
+
+### Example Voting Flow
+```typescript
+// 1. User connects Ethereum wallet (MetaMask)
+const provider = new ethers.BrowserProvider(window.ethereum);
+const signer = await provider.getSigner();
+const address = await signer.getAddress();
+
+// 2. User selects vote type (Fair or Unfair)
+const voteType = 'Fair';
+const topicId = 1n;
+
+// 3. Frontend creates message and requests signature
+const timestamp = Math.floor(Date.now() / 1000);
+const message = `Vote on zkFair topic ${topicId} with type ${voteType} at ${timestamp}`;
+const signature = await signer.signMessage(message);
+
+// 4. Frontend submits to backend
+const response = await fetch('/vote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        player_id: [pid1, pid2],  // zkWasm Player ID
+        topic_id: topicId.toString(),
+        vote_type: voteType,
+        signature: signature,
+        timestamp: timestamp
+    })
+});
+
+// 5. Backend verifies signature, queries ERC20 balance, submits vote
+// 6. Rust layer checks deduplication and records vote
+```
+
+### Vote Rules
+- **One Vote Per Topic**: Users can only vote once per topic (permanently)
+- **No Vote Changing**: Cannot change from Fair to Unfair or vice versa
+- **No Unstaking**: Votes are permanent and cannot be removed
+- **Balance Snapshot**: Vote weight is user's ERC20 balance at voting time
+- **Inactive Topics**: Cannot vote on closed or expired topics
+
 ### Voter Count Logic
-- **New Voter**: Counted when user votes a type (Fair/Unfair) for the FIRST time
-- **Not Counted Again**: Subsequent votes of same type don't increase voter count
-- **Type Cleared**: When unstaking removes ALL weight of a type, voter count decreases
-- **Independent Counts**: Fair voters and Unfair voters tracked separately
+- **Unique Voters**: Each user counted once per topic regardless of vote weight
+- **Separate Counts**: Fair voters and Unfair voters tracked independently
+- **No Overlap**: A user can only be in one voter count (Fair OR Unfair, not both)
 
 ## 🔌 API Endpoints
+
+### Vote Submission
+- `POST /vote` - Submit vote with Ethereum signature
+
+**Request Body:**
+```json
+{
+  "player_id": ["2420352573086048174", "5517301172192964977"],
+  "topic_id": "1",
+  "vote_type": "Fair",
+  "signature": "0xabcd...",
+  "timestamp": 1697654321
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "jobid": "12345",
+  "eth_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb5",
+  "vote_weight": "10000"
+}
+```
 
 ### Topic Data
 - `GET /data/topics` - Get all topics with voting statistics
 - `GET /data/topic/:topicId` - Get specific topic details
 - `GET /data/topic/:topicId/votes` - Get recent vote events (limit 100)
-- `GET /data/topic/:topicId/unstakes` - Get recent unstake events (limit 100)
-- `GET /data/topic/:topicId/stats` - Get topic statistics (vote count, unstake count, unique voters)
+- `GET /data/topic/:topicId/stats` - Get topic statistics (vote count, unique voters)
 
 ### Player Data
 - `GET /data/player/:pid1/:pid2/votes` - Player's recent votes across all topics (limit 50)
@@ -116,54 +167,72 @@ await player.vote(1n, VoteType.Unfair, 8000n);     // ✅ Now allowed
 |------------|---------|------------|------------|-------------|
 | 0 | TICK | - | Admin | Increment global counter (every 5s) |
 | 1 | INSTALL_PLAYER | - | Any | Register new player |
-| 2 | WITHDRAW | amount, addr_high, addr_low | Player | Withdraw funds to external address |
-| 3 | DEPOSIT | target_pid1, target_pid2, amount | Admin | Deposit funds for player |
-| 4 | ADD_MANAGER | target_pid1, target_pid2 | Admin | Grant manager role to player |
-| 5 | REMOVE_MANAGER | target_pid1, target_pid2 | Admin | Revoke manager role from player |
-| 6 | CREATE_TOPIC | duration | Manager | Create new voting topic |
-| 7 | VOTE | topic_id, vote_type (0=Unfair, 1=Fair), stake_amount | Player | Vote on topic |
-| 8 | UNSTAKE | topic_id, amount | Player | Unstake from topic |
-| 9 | CLOSE_TOPIC | topic_id | Manager | Manually close topic |
+| 2 | ADD_MANAGER | target_pid1, target_pid2 | Admin | Grant manager role to player |
+| 5 | CREATE_TOPIC | duration | Manager | Create new voting topic |
+| 7 | VOTE | player_id[0], player_id[1], topic_id, vote_type (0=Unfair, 1=Fair), vote_weight | Admin | Vote on topic (admin proxy for users) |
+| 8 | CLOSE_TOPIC | topic_id | Manager | Manually close topic |
+
+**Note**: The `VOTE` command is submitted by the admin (backend) on behalf of users after verifying their Ethereum signature.
 
 ## 📡 Event System
 
 ### Event Types
 - **EVENT_INDEXED_OBJECT (0)**: Topic data updates (emitted on every topic change)
-- **EVENT_VOTE (1)**: Vote events with player, topic, type, amount, counter
-- **EVENT_UNSTAKE (2)**: Unstake events with player, topic, amount, counter
+- **EVENT_VOTE (1)**: Vote events with player, topic, type, weight, counter
 - **EVENT_TOPIC_CLOSED (3)**: Topic closed events (manual or automatic)
 
 ### IndexedObject Data
 - **TOPIC_INFO (1)**: Complete topic state (id, start_time, end_time, is_active, vote statistics)
 
 ### Event Emission Strategy
-- **Topic Updates**: Emitted on every vote, unstake, create, or close operation
-- **Vote/Unstake Events**: Emitted for tracking transaction history
+- **Topic Updates**: Emitted on every vote, create, or close operation
+- **Vote Events**: Emitted for tracking transaction history
 - **Topic Closed**: Emitted when topic reaches end_time or manually closed
 
 ## 💻 Usage Examples
 
-### Initialize Client
+### Voting (Frontend)
 ```typescript
-import { VotingPlayer, VotingAPI } from './api.js';
-import { ZKWasmAppRpc } from 'zkwasm-minirollup-rpc';
+import { ethers } from 'ethers';
 
-const rpc = new ZKWasmAppRpc("http://localhost:3000");
-const player = new VotingPlayer("your_private_key", rpc);
-const api = new VotingAPI();
+// Connect wallet
+const provider = new ethers.BrowserProvider(window.ethereum);
+const signer = await provider.getSigner();
 
-// Install player (first time)
-await player.installPlayer();
+// Sign vote message
+const topicId = 1n;
+const voteType = 'Fair';
+const timestamp = Math.floor(Date.now() / 1000);
+const message = `Vote on zkFair topic ${topicId} with type ${voteType} at ${timestamp}`;
+const signature = await signer.signMessage(message);
+
+// Submit vote
+const response = await fetch('http://localhost:3000/vote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        player_id: playerId,
+        topic_id: topicId.toString(),
+        vote_type: voteType,
+        signature: signature,
+        timestamp: timestamp
+    })
+});
+
+const result = await response.json();
+console.log('Vote Weight:', result.vote_weight);
 ```
 
 ### Topic Operations
 ```typescript
 // Get all topics
-const topics = await api.getAllTopics();
+const response = await fetch('http://localhost:3000/data/topics');
+const { data: topics } = await response.json();
 console.log(`Found ${topics.length} topics`);
 
 // Get specific topic
-const topic = await api.getTopic("1");
+const topicResponse = await fetch('http://localhost:3000/data/topic/1');
+const { data: topic } = await topicResponse.json();
 console.log(`Topic ${topic.topicId}:`);
 console.log(`  Active: ${topic.isActive}`);
 console.log(`  Fair votes: ${topic.totalFairVotes}`);
@@ -172,54 +241,26 @@ console.log(`  Fair voters: ${topic.totalFairVoters}`);
 console.log(`  Unfair voters: ${topic.totalUnfairVoters}`);
 
 // Calculate vote percentages
-const percentages = api.calculateVotePercentages(topic);
-console.log(`Fair: ${percentages.fairPercentage.toFixed(2)}%`);
-console.log(`Unfair: ${percentages.unfairPercentage.toFixed(2)}%`);
-
-// Check topic status
-const currentCounter = 12345n;
-const isActive = api.isTopicActive(topic, currentCounter);
-const hasEnded = api.hasTopicEnded(topic, currentCounter);
+const totalVotes = BigInt(topic.totalFairVotes) + BigInt(topic.totalUnfairVotes);
+const fairPercentage = Number(BigInt(topic.totalFairVotes) * 10000n / totalVotes) / 100;
+console.log(`Fair: ${fairPercentage.toFixed(2)}%`);
 ```
 
-### Voting Operations
+### Check User Vote Status
 ```typescript
-// Vote Fair with 10,000 tokens
-await player.vote(1n, VoteType.Fair, 10000n);
+// Get player's position on topic
+const response = await fetch(
+    `http://localhost:3000/data/player/${pid1}/${pid2}/topic/1`
+);
+const { data: position } = await response.json();
 
-// Vote Fair again with 5,000 more tokens (allowed - same type)
-await player.vote(1n, VoteType.Fair, 5000n);
-
-// Try to vote Unfair (will fail - can only vote one type per topic)
-// await player.vote(1n, VoteType.Unfair, 1000n);  // ❌ ERROR_CANNOT_VOTE_BOTH_TYPES
-
-// Unstake 3,000 tokens
-await player.unstake(1n, 3000n);
-
-// Get player's position
-const position = await api.getPlayerTopicVote("123", "456", "1");
-console.log(`Staked: ${position.stakedAmount}`);
-console.log(`Fair weight: ${position.fairWeight}`);      // 12,000 (15,000 - 3,000)
-console.log(`Unfair weight: ${position.unfairWeight}`);  // 0 (can only have one type)
-console.log(`First vote: ${position.firstVoteTime}`);
-console.log(`Last vote: ${position.lastVoteTime}`);
-```
-
-### Transaction History
-```typescript
-// Get player's recent votes
-const votes = await api.getPlayerRecentVotes("123", "456");
-votes.forEach(vote => {
-    console.log(`Topic ${vote.topicId}: ${vote.voteType === 1 ? 'Fair' : 'Unfair'} with ${vote.stakeAmount}`);
-});
-
-// Get topic's recent votes
-const topicVotes = await api.getTopicRecentVotes("1");
-console.log(`Recent votes on topic 1: ${topicVotes.length}`);
-
-// Get topic's recent unstakes
-const unstakes = await api.getTopicRecentUnstakes("1");
-console.log(`Recent unstakes from topic 1: ${unstakes.length}`);
+if (position.voteType === null) {
+    console.log('User has not voted');
+} else if (position.voteType === 1) {
+    console.log(`User voted Fair with weight ${position.voteWeight}`);
+} else if (position.voteType === 0) {
+    console.log(`User voted Unfair with weight ${position.voteWeight}`);
+}
 ```
 
 ### Manager Operations
@@ -247,29 +288,6 @@ const admin = new VotingPlayer("admin_private_key", rpc);
 
 // Add manager
 await admin.addManager(targetPid[0], targetPid[1]);
-
-// Remove manager
-await admin.removeManager(targetPid[0], targetPid[1]);
-
-// Deposit funds for player
-await admin.depositFunds(10000n, playerPid[0], playerPid[1]);
-```
-
-### Statistics
-```typescript
-// Get topic statistics
-const stats = await fetch("http://localhost:3000/data/topic/1/stats");
-const data = await stats.json();
-console.log(`Vote count: ${data.data.voteCount}`);
-console.log(`Unstake count: ${data.data.unstakeCount}`);
-console.log(`Unique voters: ${data.data.uniqueVoters}`);
-
-// Get platform statistics
-const platformStats = await fetch("http://localhost:3000/data/platform/stats");
-const platformData = await platformStats.json();
-console.log(`Total topics: ${platformData.data.totalTopics}`);
-console.log(`Total votes: ${platformData.data.totalVotes}`);
-console.log(`Unique voters: ${platformData.data.uniqueVoters}`);
 ```
 
 ## 🔧 Build and Run
@@ -278,6 +296,7 @@ console.log(`Unique voters: ${platformData.data.uniqueVoters}`);
 - Rust (latest stable)
 - Node.js 18+
 - MongoDB (for data persistence)
+- Redis (for BullMQ transaction queue)
 - zkWasm development environment
 
 ### Build Rust Backend
@@ -300,19 +319,25 @@ cd ts
 npm install
 
 # Build TypeScript
-npm run build
+npx tsc
+
+# Start MongoDB (in another terminal)
+mongod
+
+# Start Redis (in another terminal)
+redis-server
 
 # Start the service
-node dist/service.js
+node src/service.js
 ```
 
 ### Testing
 ```bash
 # Run comprehensive integration test
-node dist/test.js
+node ts/src/test.js
 
-# Run admin deposit script
-node dist/deposit.js
+# Run API test suite
+node ts/src/test_api.js
 ```
 
 ## ⚙️ Configuration
@@ -332,17 +357,13 @@ pub const TICKS_PER_MONTH: u64 = 518400;        // 2592000s / 5s (30 days)
 pub const ADMIN_PUBKEY: [u64; 4] = [...];       // Admin public key from admin.pubkey
 ```
 
-### Timing System
-All topic times are **absolute counter values**, not relative offsets:
-- `start_time`: Absolute counter when voting begins
-- `end_time`: Absolute counter when voting ends
-- Duration in `CREATE_TOPIC`: Number of ticks to add to current counter for end_time
-
-**Example:**
-```rust
-// Current counter = 1000
-// Create topic with duration = 720 (1 hour)
-// Result: start_time = 1000, end_time = 1720
+### ERC20 Configuration (ts/src/balance_query.ts)
+```typescript
+export const defaultERC20Config: ERC20Config = {
+    rpcUrl: process.env.EVM_RPC_URL || "https://bsc-dataseed.binance.org/",
+    tokenAddress: process.env.ERC20_TOKEN_ADDRESS || "0x6952c5408b9822295ba4a7e694d0c5ffdb8fe320",
+    decimals: parseInt(process.env.ERC20_DECIMALS || "18")
+};
 ```
 
 ### Environment Variables
@@ -353,14 +374,39 @@ API_BASE_URL=http://localhost:3000
 # Database
 MONGODB_URI=mongodb://localhost:27017/zkfair
 
+# Redis
+REDISHOST=localhost
+
 # zkWasm RPC
 ZKWASM_RPC_URL=http://localhost:3000
 
-# Admin key (for deposit script)
+# Admin key
 SERVER_ADMIN_KEY=your_admin_private_key
+
+# ERC20 configuration
+EVM_RPC_URL=https://bsc-dataseed.binance.org/
+ERC20_TOKEN_ADDRESS=0x6952c5408b9822295ba4a7e694d0c5ffdb8fe320
+ERC20_DECIMALS=18
 ```
 
 ## 🔒 Security Features
+
+### Signature Verification
+- **ECDSA Recovery**: Backend recovers Ethereum address from signature
+- **Message Format Validation**: Strict message format prevents replay attacks
+- **Timestamp Check**: Signatures expire after 5 minutes
+- **Library**: Uses ethers.js v6 for secure signature verification
+
+### ERC20 Balance Oracle
+- **Real-Time Query**: Balance queried at vote submission time
+- **Cannot Be Faked**: Balance verified on-chain via RPC
+- **Sybil Resistance**: Zero balance = cannot vote
+
+### Deduplication (Rust Layer)
+- **HashMap Storage**: `HashMap<(PlayerId, TopicId), VoteRecord>`
+- **O(1) Lookup**: Fast duplicate check
+- **Permanent Storage**: Vote records never deleted
+- **Enforced by Proof**: Deduplication logic verified in zkWasm proof
 
 ### Mathematical Safety
 All arithmetic operations use safe math functions:
@@ -371,42 +417,16 @@ pub fn safe_mul(a: u64, b: u64) -> Result<u64, u32>    // Overflow protection
 pub fn safe_div(a: u64, b: u64) -> Result<u64, u32>    // Division by zero protection
 ```
 
-### Security Test Coverage
-The `security_tests.rs` module includes:
-- ✅ Overflow protection tests (addition, multiplication)
-- ✅ Underflow protection tests (subtraction)
-- ✅ Division by zero protection
-- ✅ Balance operation safety (deposit, withdraw, stake)
-- ✅ Vote weight accumulation safety
-- ✅ Voter count increment/decrement safety
-- ✅ Topic duration calculation safety
-- ✅ Proportional unstaking calculation (using u128 for intermediate values)
-- ✅ Edge case handling (zero values, max values)
-- ✅ Realistic voting scenario tests
-
-### Input Validation
-- **Stake Amount**: Must be > 0 and ≤ user balance
-- **Unstake Amount**: Must be > 0 and ≤ staked_amount
-- **Topic Duration**: Must be > 0
-- **Topic Timing**: Topics can only be voted on when active and within time window
-- **Permission Checks**: Admin/Manager operations verified before execution
-
 ### Error Handling
-30+ specific error codes for debugging:
+20+ specific error codes for debugging:
 ```rust
-// Balance errors
-ERROR_INSUFFICIENT_BALANCE (1001)
-ERROR_INSUFFICIENT_STAKE (1002)
-
 // Topic errors
 ERROR_TOPIC_NOT_FOUND (2001)
 ERROR_TOPIC_NOT_ACTIVE (2002)
 ERROR_TOPIC_ALREADY_CLOSED (2003)
-ERROR_TOPIC_EXPIRED (2004)
 ERROR_INVALID_TOPIC_TIME (2005)
 ERROR_NOT_MANAGER (2006)
-ERROR_NO_VOTES (2008)
-ERROR_CANNOT_VOTE_BOTH_TYPES (2009)
+ERROR_ALREADY_VOTED (2009)          // New: Single vote enforcement
 
 // Player errors
 ERROR_PLAYER_NOT_EXIST (3001)
@@ -434,77 +454,71 @@ interface TopicData {
 }
 ```
 
-### Player Topic Vote
+### Player Topic Vote (New Architecture)
 ```typescript
 interface PlayerTopicVote {
-    pid: string[];                // [pid1, pid2] player identifier
-    topicId: string;
-    stakedAmount: string;         // Total tokens staked
-    fairWeight: string;           // Accumulated Fair vote weight
-    unfairWeight: string;         // Accumulated Unfair vote weight
-    firstVoteTime: string;        // Counter of first vote (any type)
-    lastVoteTime: string;         // Counter of most recent vote (any type)
-    lastFairVoteTime: string;     // Counter of FIRST Fair vote (set once)
-    lastUnfairVoteTime: string;   // Counter of FIRST Unfair vote (set once)
+    pid: bigint[];                // [pid1, pid2] player identifier
+    topicId: bigint;
+    voteWeight: bigint;           // ERC20 balance at voting time
+    voteType: number;             // 1 = Fair, 0 = Unfair
+    voteTime: bigint;             // Counter when voted
 }
 ```
 
-**Note:** The fields `lastFairVoteTime` and `lastUnfairVoteTime` are somewhat misleading in name - they actually store the **first** time each vote type was cast (only set when == 0), not the most recent.
+**API Response (Not Voted):**
+```json
+{
+  "voteWeight": "0",
+  "voteType": null,
+  "voteTime": "0"
+}
+```
 
 ### Vote Event
 ```typescript
 interface VoteEvent {
-    pid: string[];
-    topicId: string;
-    voteType: number;             // 0 = Unfair, 1 = Fair
-    stakeAmount: string;
-    counter: string;
-    transactionType: 'VOTE';      // Added by API for frontend
-}
-```
-
-### Unstake Event
-```typescript
-interface UnstakeEvent {
-    pid: string[];
-    topicId: string;
-    amount: string;
-    counter: string;
-    transactionType: 'UNSTAKE';   // Added by API for frontend
+    pid: bigint[];
+    topicId: bigint;
+    voteType: number;             // 1 = Fair, 0 = Unfair
+    voteWeight: bigint;           // ERC20 balance
+    counter: bigint;
 }
 ```
 
 ## 🎯 Project Status
 
-### Current Version: v1.0
-- ✅ Multi-topic voting system
-- ✅ Weighted voting with staking
-- ✅ Proportional unstaking
+### Current Version: v2.0
+- ✅ Ethereum signature-based voting
+- ✅ ERC20 balance as vote weight
+- ✅ Single permanent vote per topic
+- ✅ No internal balance system (no deposits/withdrawals)
+- ✅ Admin proxy pattern for vote submission
+- ✅ Deduplication enforcement (Rust + MongoDB)
 - ✅ Manager role system
 - ✅ IndexedObject event system
-- ✅ Comprehensive API endpoints (9 endpoints)
-- ✅ Security test suite (10+ tests)
+- ✅ Comprehensive API endpoints (10 endpoints)
+- ✅ Security test suite
 - ✅ Mathematical safety features
 - ✅ Real-time event tracking
 - ✅ MongoDB data persistence
 - ✅ Complete English documentation
 
-### Recent Code Quality Improvements (2025-10-14)
-- ✅ **All Chinese comments translated to English** (24 total: 4 TypeScript, 20 Rust)
-- ✅ **TypeScript logical issue fixed** (api.ts isTopicActive missing start time check)
-- ✅ **100% Rust-TypeScript parity verified** (event formats, data structures, error codes)
-- ✅ **Both codebases compile successfully** (TypeScript + Rust)
-- ✅ **Zero logical errors in Rust code**
-- ✅ **Comprehensive code review completed**
+### Key Design Decisions (v2.0)
+1. **Ethereum Signature Voting**: Users sign with MetaMask, backend verifies and submits to zkWasm
+2. **External ERC20 Balance**: No internal deposits - vote weight from real-time ERC20 query
+3. **Single Permanent Vote**: Each user votes once per topic, vote is permanent (no unstaking)
+4. **Admin Proxy Pattern**: Backend signs zkWasm commands on behalf of users after verification
+5. **Deduplication**: Rust HashMap ensures one vote per (player, topic) pair
+6. **VoteType Values**: `Fair = 1`, `Unfair = 0`, `null = not voted` (API only)
 
-### Key Design Decisions
-1. **Single Vote Type Restriction**: Users can only vote ONE type (Fair OR Unfair) per topic; prevents mixed voting to simplify unstaking logic
-2. **Simple Unstaking**: When users unstake, vote weights are removed from their chosen vote type (no proportional calculation needed)
-3. **Voter Count Logic**: Only counts new voters when they vote a type for the first time; only decrements when all weight of that type is removed
-4. **Active Topic Updates Only**: Topic statistics (vote counts, voter counts) are only updated for active topics during unstake
-5. **Time-Based Validation**: Topics have start_time and end_time; voting only allowed within this window and when is_active = true
-6. **Manager Permissions**: Only managers can create topics; only managers can manually close topics
-7. **Admin Control**: Only admin can add/remove managers and deposit funds
+### Migration from v1.0
+- ❌ Removed: Deposit/Withdraw system
+- ❌ Removed: Unstaking functionality
+- ❌ Removed: Multiple votes per topic
+- ✅ Added: Ethereum signature verification
+- ✅ Added: ERC20 balance oracle
+- ✅ Added: POST /vote endpoint
+- ✅ Changed: Single permanent vote model
 
 ## 📊 Architecture Highlights
 
@@ -515,50 +529,49 @@ interface UnstakeEvent {
 - `[3, 0, *, *]` - Managers (MANAGER_PREFIX)
 - `[4, 0, *, *]` - Players (from zkwasm-rest-abi)
 
-### Event Flow
+### Vote Flow
 ```
-User votes → handle_vote() → Update player vote → Update topic stats → Store → Emit events
-                                                                              ├─ EVENT_VOTE
-                                                                              └─ EVENT_INDEXED_OBJECT (TOPIC_INFO)
-
-User unstakes → handle_unstake() → Determine vote type → Update player vote → Update topic (if active) → Emit events
-                                                                                                              ├─ EVENT_UNSTAKE
-                                                                                                              └─ EVENT_INDEXED_OBJECT (TOPIC_INFO)
+Frontend (MetaMask) → Sign message
+    ↓
+POST /vote → Verify signature → Query ERC20 balance
+    ↓
+Admin submits to zkWasm → Rust checks deduplication
+    ↓
+Record vote → Update topic stats → Emit events
+    ↓
+MongoDB stores events → Frontend queries API
 ```
 
 ### MongoDB Collections
 - `topics` - Topic data (from IndexedObject events)
 - `voteevents` - Vote transaction history
-- `unstakeevents` - Unstake transaction history
-- `playertopicvotes` - Player voting positions per topic
+- `playertopicvotes` - Player voting positions per topic (one record per user per topic)
 - `events` - Raw event data
-- `players` - Player accounts
+- `commits` - Transaction commit tracking
 
 ## 🧪 Testing
 
 The project includes comprehensive test coverage:
 
-### Integration Tests (test.ts)
-- Tests all 9 commands: INSTALL_PLAYER, ADD_MANAGER, DEPOSIT, CREATE_TOPIC, VOTE, UNSTAKE, CLOSE_TOPIC, REMOVE_MANAGER, WITHDRAW
-- Creates 3 topics with different durations
-- Tests voting with multiple players across multiple topics
-- Tests single vote type restriction (ensures users can only vote one type per topic)
-- Tests unstaking functionality
-- Tests manual topic closure
-- Tests admin operations (add/remove manager)
-- Tests withdrawal functionality
+### Integration Tests (test.js)
+- Tests Ethereum signature-based voting flow
+- Creates topics and votes on them
+- Tests single vote enforcement (duplicate vote prevention)
+- Tests topic closure
 - Queries and displays final statistics
 
+### API Tests (test_api.js)
+- Tests all 10 API endpoints
+- Validates response formats
+- Tests vote statistics calculations
+- Tests unique voter counting
+
 ### Security Tests (security_tests.rs)
-10 comprehensive test functions covering:
 - Overflow/underflow protection in all operations
-- Balance operations (deposit, withdraw, stake)
-- Vote weight accumulation and removal
+- Vote weight calculations
 - Voter count increment/decrement
 - Topic duration calculations
-- Unstaking calculations
 - Edge cases (zero, max values)
-- Realistic voting scenarios
 
 ### Test Execution
 ```bash
@@ -566,7 +579,10 @@ The project includes comprehensive test coverage:
 cargo test security_tests
 
 # TypeScript integration test
-cd ts && npm run build && node dist/test.js
+node ts/src/test.js
+
+# API test suite
+node ts/src/test_api.js
 ```
 
 ## 📝 License
@@ -587,9 +603,12 @@ When contributing to this project:
 - zkWasm Documentation: https://github.com/DelphinusLab/zkWasm
 - zkwasm-minirollup-rpc: https://github.com/DelphinusLab/zkwasm-minirollup-rpc
 - zkwasm-ts-server: https://github.com/DelphinusLab/zkwasm-ts-server
+- ethers.js v6: https://docs.ethers.org/v6/
 
 ---
 
 **Built with ❤️ using zkWasm technology**
 
-For detailed implementation examples and advanced usage patterns, see the test files in `ts/src/test.ts` and `src/security_tests.rs`.
+For detailed implementation examples and advanced usage patterns, see the test files in `ts/src/test.js`, `ts/src/test_api.js`, and `src/security_tests.rs`.
+
+For frontend integration guide, see `FRONTEND_REQUIREMENTS.md`.
