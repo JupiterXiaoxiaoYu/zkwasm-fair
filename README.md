@@ -1,6 +1,6 @@
 # zkfair - Fair/Unfair Voting System
 
-A zkWasm-based decentralized voting platform where users vote on topics using **Ethereum wallet signatures** and **ERC20 token balance** as vote weight. The system enables permanent, weighted voting on topics with "Fair" or "Unfair" choices.
+A zkWasm-based decentralized voting platform where users vote on topics using **Ethereum wallet signatures** and **ERC20 token balance** as vote weight. The system enables permanent, weighted voting on topics with "Fair" or "Unfair" choices without staking tokens.
 
 ## 🚀 Features
 
