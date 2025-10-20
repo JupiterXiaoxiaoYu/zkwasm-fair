@@ -15,7 +15,7 @@ import {
 } from "./models.js";
 import { verifyVoteSignature } from "./signature.js";
 import { getVoteWeight, defaultERC20Config } from "./balance_query.js";
-import { createCommand } from "zkwasm-minirollup-rpc";
+import { createCommand, sign, ZKWasmAppRpc } from "zkwasm-minirollup-rpc";
 import { get_server_admin_key } from "zkwasm-ts-server/src/config.js";
 
 const service = new Service(eventCallback, batchedCallback, extra);
@@ -104,8 +104,16 @@ function extra(app: Express) {
             // 3. Admin submits vote command on behalf of user
             // Note: Deduplication is enforced by Rust layer (PlayerVoteManager)
             const adminKey = get_server_admin_key();
+
+            // Query admin's current nonce (same way as PlayerConvention.getNonce)
+            const adminRpc = new ZKWasmAppRpc('http://localhost:3000');
+            const adminStateResponse = await adminRpc.queryState(adminKey);
+            const adminStateParsed = JSON.parse(JSON.stringify(adminStateResponse));
+            const adminStateData = JSON.parse(adminStateParsed.data);
+            const adminNonce = BigInt(adminStateData.player.nonce);
+
             const cmd = createCommand(
-                0n,  // Admin nonce will be handled by zkWasm
+                adminNonce,  // ✅ Use admin's current nonce
                 BigInt(VOTE_COMMAND),
                 [
                     BigInt(player_id[0]),
@@ -116,12 +124,14 @@ function extra(app: Express) {
                 ]
             );
 
-            // 4. Add transaction to queue
+            // 4. Sign the command with admin key (required by zkwasm-ts-server)
+            const signedCommand = sign(cmd, adminKey);
+
+            // 5. Add transaction to queue
             // Note: Deduplication is enforced ONLY by Rust layer (PlayerVoteManager)
             // If vote fails (e.g., already voted), the transaction will fail with ERROR_ALREADY_VOTED
             const job = await service.queue!.add('transaction', {
-                command: Array.from(cmd),
-                processingKey: adminKey
+                value: signedCommand  // ✅ Correct format: signed transaction data
             });
 
             res.status(201).send({

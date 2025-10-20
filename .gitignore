@@ -9,3 +9,4 @@ ts/node_modules/
 **/*.js
 *.md
 !README.md
+/zkfair
