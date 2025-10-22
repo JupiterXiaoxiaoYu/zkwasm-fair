@@ -25,6 +25,14 @@ let txStateManager = new TxStateManager(merkleRootToBeHexString(service.merkleRo
 
 const VOTE_COMMAND = 7;  // Vote command ID
 
+// Global mapping to store ethAddress for pending votes (player_id + topic_id → ethAddress)
+// This allows event handler to retrieve ethAddress after transaction succeeds
+const pendingVoteEthAddresses = new Map<string, string>();
+
+function makeVoteKey(pid: bigint[], topicId: bigint): string {
+    return `${pid[0]}-${pid[1]}-${topicId}`;
+}
+
 function extra(app: Express) {
     /**
      * POST /vote - Submit a vote with Ethereum signature verification
@@ -127,7 +135,11 @@ function extra(app: Express) {
             // 4. Sign the command with admin key (required by zkwasm-ts-server)
             const signedCommand = sign(cmd, adminKey);
 
-            // 5. Add transaction to queue
+            // 5. Store ethAddress in pending map (will be retrieved by event handler if vote succeeds)
+            const voteKey = makeVoteKey(player_id.map(BigInt), topicId);
+            pendingVoteEthAddresses.set(voteKey, ethAddress);
+
+            // 6. Add transaction to queue
             // Note: Deduplication is enforced ONLY by Rust layer (PlayerVoteManager)
             // If vote fails (e.g., already voted), the transaction will fail with ERROR_ALREADY_VOTED
             const job = await service.queue!.add('transaction', {
@@ -208,23 +220,54 @@ function extra(app: Express) {
     });
 
     // Get recent vote events for specific topic
+    // Query params: ?offset=0&limit=100&ethAddress=true
+    // - offset: skip N records
+    // - limit: return N records
+    // - ethAddress: set to 'true' to include Ethereum addresses (privacy-sensitive)
     app.get("/data/topic/:topicId/votes", async (req: any, res) => {
         try {
             const topicId = req.params.topicId;
+            const offset = parseInt(req.query.offset) || 0;
+            const limit = parseInt(req.query.limit) || 100;
+            const includeEthAddress = req.query.ethAddress === 'true';
+
+            // Validate parameters
+            if (offset < 0 || limit < 1 || limit > 1000) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Invalid pagination parameters (offset >= 0, 1 <= limit <= 1000)'
+                });
+            }
+
+            // Get total count for this topic
+            const totalCount = await VoteEventModel.countDocuments({ topicId: topicId });
 
             const doc = await VoteEventModel.find({ topicId: topicId })
                 .sort({ counter: -1 })
-                .limit(100);
+                .skip(offset)
+                .limit(limit);
 
             let data = doc.map((d: mongoose.Document) => {
                 const vote = docToJSON(d);
                 vote.transactionType = 'VOTE';
+
+                // Remove ethAddress if not explicitly requested (privacy protection)
+                if (!includeEthAddress) {
+                    delete vote.ethAddress;
+                }
+
                 return vote;
             });
 
             res.status(200).send({
                 success: true,
                 data: data,
+                pagination: {
+                    offset: offset,
+                    limit: limit,
+                    total: totalCount,
+                    returned: data.length
+                }
             });
         } catch (e) {
             console.error("Error fetching topic votes:", e);
@@ -237,26 +280,57 @@ function extra(app: Express) {
 
 
     // Get player's recent vote events across all topics
+    // Query params: ?offset=0&limit=100&ethAddress=true
+    // - offset: skip N records
+    // - limit: return N records
+    // - ethAddress: set to 'true' to include Ethereum addresses (privacy-sensitive)
     app.get("/data/player/:pid1/:pid2/votes", async (req: any, res) => {
         try {
             const pid1 = req.params.pid1;
             const pid2 = req.params.pid2;
+            const offset = parseInt(req.query.offset) || 0;
+            const limit = parseInt(req.query.limit) || 100;
+            const includeEthAddress = req.query.ethAddress === 'true';
+
+            // Validate parameters
+            if (offset < 0 || limit < 1 || limit > 1000) {
+                return res.status(400).send({
+                    success: false,
+                    error: 'Invalid pagination parameters (offset >= 0, 1 <= limit <= 1000)'
+                });
+            }
+
+            // Get total count for this player
+            const totalCount = await VoteEventModel.countDocuments({ pid: [pid1, pid2] });
 
             const doc = await VoteEventModel.find({
                 pid: [pid1, pid2],
             })
                 .sort({ counter: -1 })
-                .limit(50);
+                .skip(offset)
+                .limit(limit);
 
             let data = doc.map((d: mongoose.Document) => {
                 const vote = docToJSON(d);
                 vote.transactionType = 'VOTE';
+
+                // Remove ethAddress if not explicitly requested (privacy protection)
+                if (!includeEthAddress) {
+                    delete vote.ethAddress;
+                }
+
                 return vote;
             });
 
             res.status(200).send({
                 success: true,
                 data: data,
+                pagination: {
+                    offset: offset,
+                    limit: limit,
+                    total: totalCount,
+                    returned: data.length
+                }
             });
         } catch (e) {
             console.error("Error fetching player votes:", e);
@@ -268,11 +342,13 @@ function extra(app: Express) {
     });
 
     // Get player's topic vote data
+    // Query params: ?ethAddress=true to include Ethereum address (privacy-sensitive)
     app.get("/data/player/:pid1/:pid2/topic/:topicId", async (req: any, res) => {
         try {
             const pid1 = req.params.pid1;
             const pid2 = req.params.pid2;
             const topicId = req.params.topicId;
+            const includeEthAddress = req.query.ethAddress === 'true';
 
             const doc = await PlayerTopicVoteModel.findOne({
                 pid: [pid1, pid2],
@@ -296,6 +372,11 @@ function extra(app: Express) {
 
             const voteData = docToJSON(doc);
 
+            // Remove ethAddress if not explicitly requested (privacy protection)
+            if (!includeEthAddress) {
+                delete voteData.ethAddress;
+            }
+
             res.status(200).send({
                 success: true,
                 data: voteData,
@@ -310,16 +391,27 @@ function extra(app: Express) {
     });
 
     // Get all player's topic votes
+    // Query params: ?ethAddress=true to include Ethereum address (privacy-sensitive)
     app.get("/data/player/:pid1/:pid2/topics", async (req: any, res) => {
         try {
             const pid1 = req.params.pid1;
             const pid2 = req.params.pid2;
+            const includeEthAddress = req.query.ethAddress === 'true';
 
             const doc = await PlayerTopicVoteModel.find({
                 pid: [pid1, pid2]
             });
 
-            let data = doc.map((d: mongoose.Document) => docToJSON(d));
+            let data = doc.map((d: mongoose.Document) => {
+                const vote = docToJSON(d);
+
+                // Remove ethAddress if not explicitly requested (privacy protection)
+                if (!includeEthAddress) {
+                    delete vote.ethAddress;
+                }
+
+                return vote;
+            });
 
             res.status(200).send({
                 success: true,
@@ -505,6 +597,18 @@ async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
 
         console.log(`Vote Event: Player [${voteObj.pid[0]}, ${voteObj.pid[1]}] voted ${voteObj.voteType === 1 ? 'Fair' : 'Unfair'} with weight ${voteObj.voteWeight} on topic ${voteObj.topicId}`);
 
+        // Retrieve ethAddress from pending map (if available)
+        const voteKey = makeVoteKey(voteObj.pid, voteObj.topicId);
+        const ethAddress = pendingVoteEthAddresses.get(voteKey);
+
+        if (ethAddress) {
+            console.log(`✅ Vote from Ethereum address: ${ethAddress}`);
+            // Remove from pending map after successful processing
+            pendingVoteEthAddresses.delete(voteKey);
+        } else {
+            console.log(`⚠️ No ethAddress found for vote (may be from replay or old transaction)`);
+        }
+
         // Store vote event in database (use updateOne with upsert to prevent duplicates on service restart)
         await VoteEventModel.updateOne(
             {
@@ -512,7 +616,10 @@ async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
                 topicId: voteObj.topicId,
                 counter: voteObj.counter
             },
-            voteObj,
+            {
+                ...voteObj,
+                ethAddress  // Add ethAddress (will be undefined if not found, which is OK)
+            },
             { upsert: true }
         );
 
@@ -522,7 +629,8 @@ async function handleVoteEvent(arg: TxWitness, data: BigUint64Array) {
             topicId: voteObj.topicId,
             voteWeight: voteObj.voteWeight,
             voteType: voteObj.voteType,  // 1 = Fair, 0 = Unfair (same as Rust enum)
-            voteTime: voteObj.counter
+            voteTime: voteObj.counter,
+            ethAddress  // Add ethAddress
         };
 
         await PlayerTopicVoteModel.findOneAndUpdate(
