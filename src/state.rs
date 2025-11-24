@@ -1,8 +1,6 @@
 use serde::Serialize;
 use zkwasm_rest_abi::{StorageData, MERKLE_MAP};
 use std::cell::RefCell;
-use crate::topic::TopicManager;
-use crate::event::emit_topic_indexed_object;
 
 #[derive(Serialize)]
 pub struct QueryState {
@@ -195,18 +193,8 @@ impl Transaction {
     }
 
     pub fn tick(&self) {
-        let next_topic_id = {
-            let mut global_state = GLOBAL_STATE.0.borrow_mut();
-            global_state.counter += 1;
-            global_state.next_topic_id
-        };
-
-        // Emit indexed object for each topic (topic IDs are sequential from 1)
-        for topic_id in 1..next_topic_id {
-            if let Some(topic) = TopicManager::get_topic(topic_id) {
-                emit_topic_indexed_object(&topic, topic_id);
-            }
-        }
+        let mut global_state = GLOBAL_STATE.0.borrow_mut();
+        global_state.counter += 1;
     }
 
     pub fn inc_tx_number(&self) {
