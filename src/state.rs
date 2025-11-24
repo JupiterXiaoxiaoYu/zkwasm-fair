@@ -23,8 +23,8 @@ pub struct GlobalState {
 impl GlobalState {
     pub fn new() -> Self {
         GlobalState {
-            counter: 0,
-            next_topic_id: 1,
+            counter: 428678,
+            next_topic_id: 28,
             total_players: 0,
             txsize: 0,
             txcounter: 0,
