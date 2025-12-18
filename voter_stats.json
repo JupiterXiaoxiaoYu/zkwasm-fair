@@ -1,0 +1,392 @@
+[
+  {
+    "rank": 1,
+    "ethAddress": "0x25c37206e5E2C4EBcB83cd9Be7D944E7cA7267B0",
+    "proposalCount": 1,
+    "totalVoteWeight": "2592500"
+  },
+  {
+    "rank": 2,
+    "ethAddress": "0xD2e372C0Ef6c50406018a12cB980A7a0202ad92F",
+    "proposalCount": 1,
+    "totalVoteWeight": "2267083"
+  },
+  {
+    "rank": 3,
+    "ethAddress": "0x6ee34d5a9D48271b680D5d1A5bb04d074C333B51",
+    "proposalCount": 1,
+    "totalVoteWeight": "1909925"
+  },
+  {
+    "rank": 4,
+    "ethAddress": "0xD442FC7bF60c750eFc764aB56571CE05CBbDc818",
+    "proposalCount": 1,
+    "totalVoteWeight": "1887997"
+  },
+  {
+    "rank": 5,
+    "ethAddress": "0x1E75A911cBdb78B4C1B98d476b928B3a02c18525",
+    "proposalCount": 1,
+    "totalVoteWeight": "1801744"
+  },
+  {
+    "rank": 6,
+    "ethAddress": "0x7A52159cDEBB9c9998B4F8018E15CD04364E7CD7",
+    "proposalCount": 1,
+    "totalVoteWeight": "1673821"
+  },
+  {
+    "rank": 7,
+    "ethAddress": "0x28BfC64d3e64Fa1a624EB0053F0c8f0438504a62",
+    "proposalCount": 1,
+    "totalVoteWeight": "1598375"
+  },
+  {
+    "rank": 8,
+    "ethAddress": "0x85bBa4EB8602251b6b3c172ED4cF4E05a179a6e3",
+    "proposalCount": 1,
+    "totalVoteWeight": "1532956"
+  },
+  {
+    "rank": 9,
+    "ethAddress": "0xE50C821F4583389d9b0AeC76703DF70F9C709ED9",
+    "proposalCount": 1,
+    "totalVoteWeight": "1513302"
+  },
+  {
+    "rank": 10,
+    "ethAddress": "0x1bf0Df7De3fbe9587e54DCf5C6F6Df4205cB3a9E",
+    "proposalCount": 1,
+    "totalVoteWeight": "1413914"
+  },
+  {
+    "rank": 11,
+    "ethAddress": "0x1D1803C0222060A77A6db1eC7073109CD895F00a",
+    "proposalCount": 1,
+    "totalVoteWeight": "1293696"
+  },
+  {
+    "rank": 12,
+    "ethAddress": "0x14CA07B298b7C3FA1Afc044093D93C9BFd2d49BE",
+    "proposalCount": 1,
+    "totalVoteWeight": "1224867"
+  },
+  {
+    "rank": 13,
+    "ethAddress": "0x2B3ABdfC5D2dd8cD507D513eAA3279643BfCAb3d",
+    "proposalCount": 1,
+    "totalVoteWeight": "1211234"
+  },
+  {
+    "rank": 14,
+    "ethAddress": "0x3cEab7706Bfb96bea0Da34D9CeC5934549a79Bf4",
+    "proposalCount": 1,
+    "totalVoteWeight": "1073186"
+  },
+  {
+    "rank": 15,
+    "ethAddress": "0xFd7f7Db689aA4594DBDb06393feB62CbDA8E8789",
+    "proposalCount": 1,
+    "totalVoteWeight": "1042221"
+  },
+  {
+    "rank": 16,
+    "ethAddress": "0x0BB157D9948F36e2Fbd1a27E76b1359b6D84294F",
+    "proposalCount": 1,
+    "totalVoteWeight": "907567"
+  },
+  {
+    "rank": 17,
+    "ethAddress": "0xE1cAF1CD20C63b081640E8D8Ac83B0120fd36582",
+    "proposalCount": 1,
+    "totalVoteWeight": "881427"
+  },
+  {
+    "rank": 18,
+    "ethAddress": "0x0deCa07648d89ac9d207CB7cAFDfef33d587edB4",
+    "proposalCount": 1,
+    "totalVoteWeight": "571347"
+  },
+  {
+    "rank": 19,
+    "ethAddress": "0xEe160737Bf4cE8E59E4D8F4aE5Da90CCB24E9fF9",
+    "proposalCount": 9,
+    "totalVoteWeight": "532413"
+  },
+  {
+    "rank": 20,
+    "ethAddress": "0x0b51a18b0b111Dc3b2562ef6782b08be7Eb19eB3",
+    "proposalCount": 1,
+    "totalVoteWeight": "348389"
+  },
+  {
+    "rank": 21,
+    "ethAddress": "0x55454790Ce04Cc7396252C40f572CFAfB33Ee88e",
+    "proposalCount": 1,
+    "totalVoteWeight": "348074"
+  },
+  {
+    "rank": 22,
+    "ethAddress": "0xDbe9Ec17f628890AD4f867946da0dd11D82544B3",
+    "proposalCount": 1,
+    "totalVoteWeight": "281725"
+  },
+  {
+    "rank": 23,
+    "ethAddress": "0xCfa19d629629D48e87B4Df3921908982C9b84900",
+    "proposalCount": 1,
+    "totalVoteWeight": "219319"
+  },
+  {
+    "rank": 24,
+    "ethAddress": "0xABC817d73E5Dda61970e885Cf7a77765Dc7B6C46",
+    "proposalCount": 1,
+    "totalVoteWeight": "198522"
+  },
+  {
+    "rank": 25,
+    "ethAddress": "0x6489e7cAFcD923964eD107DfBCA5BB75Ea8F595d",
+    "proposalCount": 12,
+    "totalVoteWeight": "132246"
+  },
+  {
+    "rank": 26,
+    "ethAddress": "0xDDb75eAE5456A9e6Eb396731fe2910bEA5029DAc",
+    "proposalCount": 1,
+    "totalVoteWeight": "115232"
+  },
+  {
+    "rank": 27,
+    "ethAddress": "0x874d391fc389d3BFa45F88297B3CC9404780B324",
+    "proposalCount": 5,
+    "totalVoteWeight": "96475"
+  },
+  {
+    "rank": 28,
+    "ethAddress": "0x71670092C77EB2651E11d9cD901E17A08Ce0C785",
+    "proposalCount": 10,
+    "totalVoteWeight": "67690"
+  },
+  {
+    "rank": 29,
+    "ethAddress": "0x74a609ba15B6e9A21019456782Bf94C678e673e3",
+    "proposalCount": 3,
+    "totalVoteWeight": "42861"
+  },
+  {
+    "rank": 30,
+    "ethAddress": "0xC8B1eEFf54649038bEfe199C25d30a2823364D23",
+    "proposalCount": 1,
+    "totalVoteWeight": "19293"
+  },
+  {
+    "rank": 31,
+    "ethAddress": "0xdAC9241B019a343e65Ff9Aff3F43c63b19fF317D",
+    "proposalCount": 11,
+    "totalVoteWeight": "17418"
+  },
+  {
+    "rank": 32,
+    "ethAddress": "0xdB667Ae266784f46994dF294D0110958681ea8A8",
+    "proposalCount": 15,
+    "totalVoteWeight": "15000"
+  },
+  {
+    "rank": 33,
+    "ethAddress": "0x26DfFc4E6105baEEA4fBC76017EB1b981C5E7cA1",
+    "proposalCount": 1,
+    "totalVoteWeight": "11312"
+  },
+  {
+    "rank": 34,
+    "ethAddress": "0x3fa4888124DCb11260Bdde079021Cf7B535354fb",
+    "proposalCount": 28,
+    "totalVoteWeight": "8534"
+  },
+  {
+    "rank": 35,
+    "ethAddress": "0xe387b56e5AE79Bf5B217fb7186e95DAEd34ca38D",
+    "proposalCount": 26,
+    "totalVoteWeight": "5902"
+  },
+  {
+    "rank": 36,
+    "ethAddress": "0x0765518cf23F15A3b72C7e6480ff8F42Fa32BDdd",
+    "proposalCount": 1,
+    "totalVoteWeight": "2197"
+  },
+  {
+    "rank": 37,
+    "ethAddress": "0x829Cdb192adc18D8AEb5b079309947075D156f60",
+    "proposalCount": 5,
+    "totalVoteWeight": "1560"
+  },
+  {
+    "rank": 38,
+    "ethAddress": "0xc94f0c46b6C964cAb00b4E9D36f51dccC6ca2309",
+    "proposalCount": 6,
+    "totalVoteWeight": "1380"
+  },
+  {
+    "rank": 39,
+    "ethAddress": "0xAce72fA6528Ef8ccd28E0c5f9e0c84276F7a32BF",
+    "proposalCount": 6,
+    "totalVoteWeight": "1152"
+  },
+  {
+    "rank": 40,
+    "ethAddress": "0x81c7d31e7A791818053151Fcf0e442d73ccBB177",
+    "proposalCount": 5,
+    "totalVoteWeight": "1000"
+  },
+  {
+    "rank": 41,
+    "ethAddress": "0xE1a24c09E5a5FeD05b23fdddA43bcB000803C1Bf",
+    "proposalCount": 6,
+    "totalVoteWeight": "720"
+  },
+  {
+    "rank": 42,
+    "ethAddress": "0x8c73041617EEbf7A033909CbB51B1dD4C69Db65f",
+    "proposalCount": 6,
+    "totalVoteWeight": "600"
+  },
+  {
+    "rank": 43,
+    "ethAddress": "0xa43A262BE5258Cac9957C5eDcEdF82380605983A",
+    "proposalCount": 4,
+    "totalVoteWeight": "600"
+  },
+  {
+    "rank": 44,
+    "ethAddress": "0x43D5FAAa7aF4039419BCb273F109Ba325d4e1294",
+    "proposalCount": 4,
+    "totalVoteWeight": "400"
+  },
+  {
+    "rank": 45,
+    "ethAddress": "0x5BB0F19F1Ef6A83b475B9502a8B7488FF20A023F",
+    "proposalCount": 4,
+    "totalVoteWeight": "400"
+  },
+  {
+    "rank": 46,
+    "ethAddress": "0x34A46B9f50847301C8150F9d68D603fb3d2dc4C8",
+    "proposalCount": 4,
+    "totalVoteWeight": "396"
+  },
+  {
+    "rank": 47,
+    "ethAddress": "0xb7265621016b574B7B1D5EF9403fdc57044a8b9b",
+    "proposalCount": 6,
+    "totalVoteWeight": "390"
+  },
+  {
+    "rank": 48,
+    "ethAddress": "0xbF0826043F143478c923E0cAe01A8796017EAaD3",
+    "proposalCount": 1,
+    "totalVoteWeight": "235"
+  },
+  {
+    "rank": 49,
+    "ethAddress": "0xe83b1D302D4a477118f9fcC10362e4180102D666",
+    "proposalCount": 4,
+    "totalVoteWeight": "200"
+  },
+  {
+    "rank": 50,
+    "ethAddress": "0x670195691F1347aB9002786bE921B1dD1020C57B",
+    "proposalCount": 2,
+    "totalVoteWeight": "200"
+  },
+  {
+    "rank": 51,
+    "ethAddress": "0x50da31FbbC87699976c3DcCd0736cC45cCf37aF9",
+    "proposalCount": 5,
+    "totalVoteWeight": "100"
+  },
+  {
+    "rank": 52,
+    "ethAddress": "0x316E0B043989bDd0aF173ab0102207e32dF8EA21",
+    "proposalCount": 4,
+    "totalVoteWeight": "60"
+  },
+  {
+    "rank": 53,
+    "ethAddress": "0x05d54E819b6e4b5Cc1965EcDb4d295FbeEA0B82f",
+    "proposalCount": 5,
+    "totalVoteWeight": "60"
+  },
+  {
+    "rank": 54,
+    "ethAddress": "0x85Fd059F4b9c10B211c9c0643663Ce619a6C67b1",
+    "proposalCount": 2,
+    "totalVoteWeight": "60"
+  },
+  {
+    "rank": 55,
+    "ethAddress": "0x123cc96D55404281C3b90f78b0Dd20c7380D8682",
+    "proposalCount": 2,
+    "totalVoteWeight": "60"
+  },
+  {
+    "rank": 56,
+    "ethAddress": "0x64EeE71e6da3e895971D382789CcbE06Dd0FE9b6",
+    "proposalCount": 12,
+    "totalVoteWeight": "48"
+  },
+  {
+    "rank": 57,
+    "ethAddress": "0x8d95F60224E6561559b47352485D86D4F7047eCD",
+    "proposalCount": 7,
+    "totalVoteWeight": "35"
+  },
+  {
+    "rank": 58,
+    "ethAddress": "0xcef53EB668709e7E54B301e1194C3d4B91EEe02c",
+    "proposalCount": 7,
+    "totalVoteWeight": "35"
+  },
+  {
+    "rank": 59,
+    "ethAddress": "0x3B7BC940311dA65f59A2F2A80A184E29637de7eD",
+    "proposalCount": 1,
+    "totalVoteWeight": "35"
+  },
+  {
+    "rank": 60,
+    "ethAddress": "0x8d2f830DE312d89f41d7189C3b26E8754132bD9b",
+    "proposalCount": 3,
+    "totalVoteWeight": "30"
+  },
+  {
+    "rank": 61,
+    "ethAddress": "0xF9Cee322E84B005Cbfe456BD7f1C244DbAFC8b0a",
+    "proposalCount": 5,
+    "totalVoteWeight": "25"
+  },
+  {
+    "rank": 62,
+    "ethAddress": "0x21D4D8F76A90c605Da7C23E3Dfc4Af83d0168A97",
+    "proposalCount": 4,
+    "totalVoteWeight": "20"
+  },
+  {
+    "rank": 63,
+    "ethAddress": "0xaEB1Ead615334D20AA7217779b2657Ce25d36609",
+    "proposalCount": 2,
+    "totalVoteWeight": "12"
+  },
+  {
+    "rank": 64,
+    "ethAddress": "0xE99e5b460fF0d9c13b2FbB021bEa0D9AF4BED3d7",
+    "proposalCount": 1,
+    "totalVoteWeight": "3"
+  },
+  {
+    "rank": 65,
+    "ethAddress": "0x452b72fE1E4f86835236B8243500339f32374b7D",
+    "proposalCount": 2,
+    "totalVoteWeight": "2"
+  }
+]

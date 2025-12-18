@@ -5,6 +5,9 @@ const ERC20_ABI = [
     "function balanceOf(address owner) view returns (uint256)"
 ];
 
+// BNB to FAIR conversion ratio: 1 BNB = 100,000 FAIR vote weight
+const BNB_TO_FAIR_RATIO = 100000n;
+
 /**
  * Query ERC20 token balance for a given address
  * @param rpcUrl - The EVM chain RPC URL (e.g., Ethereum mainnet, BSC, etc.)
@@ -56,6 +59,25 @@ export function balanceToVoteWeight(balance: bigint, decimals: number = 18): big
 }
 
 /**
+ * Query native BNB balance for a given address
+ * @param rpcUrl - The BSC RPC URL
+ * @param holderAddress - The address to query balance for
+ * @returns The BNB balance as bigint (in wei, 18 decimals)
+ */
+export async function queryNativeBalance(
+    rpcUrl: string,
+    holderAddress: string
+): Promise<bigint> {
+    try {
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const balance = await provider.getBalance(holderAddress);
+        return BigInt(balance.toString());
+    } catch (error) {
+        throw new Error(`Failed to query native balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+
+/**
  * Query balance and convert to vote weight in one call
  * @param rpcUrl - The EVM chain RPC URL
  * @param tokenAddress - The ERC20 token contract address
@@ -71,6 +93,47 @@ export async function getVoteWeight(
 ): Promise<bigint> {
     const balance = await queryERC20Balance(rpcUrl, tokenAddress, holderAddress);
     return balanceToVoteWeight(balance, decimals);
+}
+
+/**
+ * Query combined vote weight from FAIR token + BNB
+ * 1 BNB = 100,000 FAIR vote weight
+ * @param rpcUrl - The BSC RPC URL
+ * @param tokenAddress - The FAIR token contract address
+ * @param holderAddress - The address to query balance for
+ * @param decimals - Token decimals (default: 18)
+ * @returns Combined vote weight as u64
+ */
+export async function getCombinedVoteWeight(
+    rpcUrl: string,
+    tokenAddress: string,
+    holderAddress: string,
+    decimals: number = 18
+): Promise<bigint> {
+    // Query both balances in parallel
+    const [fairBalance, bnbBalance] = await Promise.all([
+        queryERC20Balance(rpcUrl, tokenAddress, holderAddress),
+        queryNativeBalance(rpcUrl, holderAddress)
+    ]);
+
+    // Convert to whole token units (divide by 10^decimals)
+    const divisor = BigInt(10) ** BigInt(decimals);
+    const fairWeight = fairBalance / divisor;
+
+    // BNB weight: multiply by 100,000 FIRST, then divide
+    // This ensures 0.0091 BNB = 910 vote weight (not 0)
+    const bnbWeight = (bnbBalance * BNB_TO_FAIR_RATIO) / divisor;
+
+    // Calculate combined weight: FAIR + BNB weight
+    const combinedWeight = fairWeight + bnbWeight;
+
+    // Ensure it fits in u64
+    const MAX_U64 = BigInt("18446744073709551615");
+    if (combinedWeight > MAX_U64) {
+        throw new Error(`Combined vote weight ${combinedWeight} exceeds u64 max value`);
+    }
+
+    return combinedWeight;
 }
 
 // Configuration type for ERC20 settings

@@ -5,6 +5,7 @@
         "@types/bn.js": "^5.1.5",
         "@types/node": "^20.14.2",
         "@types/sha256": "^0.2.2",
+        "axios": "^1.13.2",
         "delphinus-curves": "github:DelphinusLab/delphinus-curves#xgao",
         "dotenv": "^16.3.1",
         "ts-node": "^10.9.2",

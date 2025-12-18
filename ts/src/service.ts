@@ -14,7 +14,7 @@ import {
     EVENT_TOPIC_CLOSED
 } from "./models.js";
 import { verifyVoteSignature } from "./signature.js";
-import { getVoteWeight, defaultERC20Config } from "./balance_query.js";
+import { getCombinedVoteWeight, defaultERC20Config } from "./balance_query.js";
 import { createCommand, sign, ZKWasmAppRpc } from "zkwasm-minirollup-rpc";
 import { get_server_admin_key } from "zkwasm-ts-server/src/config.js";
 
@@ -92,15 +92,16 @@ function extra(app: Express) {
             const ethAddress = verifyVoteSignature(topicId, voteTypeNum, timestamp, signature);
             console.log(`Vote request from Ethereum address: ${ethAddress}`);
 
-            // 2. Query ERC20 balance for vote weight
-            const voteWeight = await getVoteWeight(
+            // 2. Query combined vote weight (FAIR + BNB)
+            // 1 BNB = 100,000 FAIR vote weight
+            const voteWeight = await getCombinedVoteWeight(
                 defaultERC20Config.rpcUrl,
                 defaultERC20Config.tokenAddress,
                 ethAddress,
                 defaultERC20Config.decimals
             );
 
-            console.log(`Vote weight for ${ethAddress}: ${voteWeight}`);
+            console.log(`Combined vote weight for ${ethAddress}: ${voteWeight} (FAIR + BNB*100000)`);
 
             if (voteWeight === 0n) {
                 return res.status(400).send({
